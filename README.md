@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" alt="Capture" width="160" />
+</p>
+
 <h1 align="center">Capture</h1>
 
 <p align="center">

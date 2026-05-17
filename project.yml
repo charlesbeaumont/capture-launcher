@@ -26,6 +26,7 @@ targets:
       - path: Sources
         excludes:
           - "Info.plist"
+      - path: Resources
     dependencies:
       - package: KeyboardShortcuts
     settings:
