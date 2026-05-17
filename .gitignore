@@ -1,0 +1,24 @@
+# XcodeGen output
+*.xcodeproj/
+
+# Xcode build output
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Release artifacts
+dist/
+
+# Swift package manager
+.build/
+.swiftpm/
+Packages/
+Package.pins
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Claude Code harness state
+.claude/
