@@ -14,6 +14,10 @@ A tiny macOS menu-bar app. Press a global hotkey, a Spotlight-style glass bar op
 
 Single purpose. No history, no recents, no fuzzy search, no plugins, no main window, no Dock icon. Lives entirely in the menu bar.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Capture in action — glass overlay bar over a desktop" width="720" />
+</p>
+
 ## Install
 
 ### Download (recommended)
