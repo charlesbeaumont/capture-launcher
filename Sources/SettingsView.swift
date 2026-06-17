@@ -20,7 +20,7 @@ struct SettingsView: View {
             Text("URI Template")
                 .font(.headline)
 
-            Text("The URI opened when you capture. Use the placeholders below to inject the captured text and current time. All substituted values are URL-encoded.")
+            Text("The URI opened when you capture. The default prepends the capture to your Bear “Inbox” note; edit the `id=` value to target a different note. Use the placeholders below to inject the captured text and current time. All substituted values are URL-encoded.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -41,6 +41,7 @@ struct SettingsView: View {
                 Text("`{content}` — captured text")
                 Text("`{time}` — `HH:mm`")
                 Text("`{date}` — `yyyy-MM-dd`")
+                Text("`{datetime}` — `2026-06-15 21:30`")
             }
             .font(.caption)
             .foregroundStyle(.secondary)

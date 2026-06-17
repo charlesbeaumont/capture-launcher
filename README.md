@@ -10,7 +10,7 @@
   <a href="https://github.com/charlesbeaumont/capture-launcher/releases"><img src="https://img.shields.io/github/v/release/charlesbeaumont/capture-launcher?include_prereleases&sort=semver" alt="Release" /></a>
 </p>
 
-A tiny macOS menu-bar app. Press a global hotkey, a Spotlight-style glass bar opens, type a thought, hit Enter, the text is fired at a configurable URI scheme (default: Octarine's `octarine://daily?...` to append a line to today's daily desk).
+A tiny macOS menu-bar app. Press a global hotkey, a Spotlight-style glass bar opens, type a thought, hit Enter, the text is fired at a configurable URI scheme (default: Bear's `bear://x-callback-url/add-text` to prepend a timestamped block to a pinned "Inbox" note).
 
 Single purpose. No history, no recents, no fuzzy search, no plugins, no main window, no Dock icon. Lives entirely in the menu bar.
 
@@ -58,16 +58,25 @@ Click the brain in the menu bar → **Settings…** (or ⌘, while the menu is o
 The only setting is the **URI template** that's opened on Enter. Default:
 
 ```
-octarine://daily?date=today&content=-%20%28{time}%29%20{content}&position=bottom&separator=%0A&openAfter=false
+bear://x-callback-url/add-text?id=<note-id>&mode=prepend&open_note=no&show_window=no&text=**{datetime}**%0A{content}%0A
 ```
 
-Three placeholders, all URL-encoded on substitution:
+Four placeholders, all strictly URL-encoded (`.alphanumerics`) on substitution:
 
 - `{content}` — captured text
 - `{time}` — current time as `HH:mm`
 - `{date}` — current date as `yyyy-MM-dd`
+- `{datetime}` — `yyyy-MM-dd HH:mm`
 
-The default writes a line like `- (14:32) my thought` to today's `Daily/YYYY-MM-DD.md` via Octarine. Swap the template to ship your capture wherever you want.
+The default **prepends** a block like the following to your Bear "Inbox" note (newest on top), without bringing Bear forward:
+
+```
+**2026-06-15 21:30**
+my thought
+
+```
+
+Edit the `id=` value to target a different Bear note, or swap the template entirely to ship captures wherever you want.
 
 ## Hotkey
 

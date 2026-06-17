@@ -2,7 +2,7 @@
 
 ## What this is
 
-Single-purpose macOS overlay launcher. Press a global hotkey, a Spotlight-style glass bar opens, type a thought, hit Enter, the text is fired at a configurable URI (default: Octarine's `octarine://daily?...` to append a line to today's daily desk).
+Single-purpose macOS overlay launcher. Press a global hotkey, a Spotlight-style glass bar opens, type a thought, hit Enter, the text is fired at a configurable URI (default: Bear's `bear://x-callback-url/add-text` to prepend a timestamped block to the pinned "Inbox" note).
 
 The point is **speed**: hotkey → glass bar → Enter → gone. Don't add features that slow that down. No history, no recents, no fuzzy search, no plugins, no main window, no Dock icon. Lives entirely as a menu-bar app.
 
@@ -17,7 +17,7 @@ Sources/
   AppDelegate.swift         @MainActor, .accessory policy, hotkey registration, panel lifecycle, fade animations
   LauncherPanel.swift       NSPanel subclass (non-activating, transparent, rounded contentView mask)
   LauncherView.swift        SwiftUI input view: .glassEffect, multi-line growth via height preference key
-  DailyCapture.swift        URI template substitution ({content}/{time}/{date}), NSWorkspace.open
+  DailyCapture.swift        URI template substitution ({content}/{time}/{date}/{datetime}), NSWorkspace.open → Bear add-text
   HotkeyName.swift          KeyboardShortcuts.Name.toggleLauncher
   SettingsView.swift        URI template editor backed by @AppStorage("uriTemplate")
   Info.plist                LSUIElement=true, bundle metadata (uses $(EXECUTABLE_NAME) etc.)
@@ -50,7 +50,7 @@ xcodegen generate
   - `container.layer.cornerRadius = 28` + `masksToBounds = true` — clips the contentView's rectangular corners to match the glass capsule's rounded shape so `windowBackgroundColor` doesn't leak through.
   - `invalidateShadow()` after every resize so the drop shadow re-traces the new content silhouette.
 - **No "panel resigned key" as a dismiss signal.** Non-activating panels routinely lose key status for OS-internal reasons; using `didResignKeyNotification` to dismiss caused the panel to vanish ~1 second after showing. The bar now only dismisses on Esc / Enter / hotkey toggle.
-- **`NSWorkspace.shared.open(url, configuration:)` with `config.activates = false`.** Required so opening the URI doesn't bring Octarine (or whichever target app) to the foreground.
+- **`NSWorkspace.shared.open(url, configuration:)` with `config.activates = false`.** Required so opening the URI doesn't bring Bear (or whichever target app) to the foreground. Belt-and-braces with Bear's own `show_window=no`/`open_note=no`.
 - **One runtime dependency.** [`KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) for the global hotkey (wraps Carbon `RegisterEventHotKey`). Declared in `project.yml`'s `packages:` block.
 
 ## Hotkey
@@ -59,13 +59,25 @@ Default is `⌃⌘Space`. Defined in `Sources/HotkeyName.swift`. The library per
 
 ## URI template
 
-The default ([`Sources/DailyCapture.swift`](Sources/DailyCapture.swift)) is the existing Octarine quicklink. Editable via Settings. Three placeholders, all URL-encoded on substitution:
+The default ([`Sources/DailyCapture.swift`](Sources/DailyCapture.swift)) is a Bear `add-text` x-callback-url that **prepends** a capture block to the pinned "Inbox" note (`mode=prepend`, `open_note=no`, `show_window=no` so Bear never steals focus). The note is targeted by its stable id (`E01000CB-BE7D-4FCB-8340-BBE23A4569B9`); edit the `id=` value to retarget, or swap to `title=Inbox` (id is preferred — titles aren't guaranteed unique). The note must stay unencrypted — `add-text` can't write locked notes.
+
+Decoded capture block:
+
+```
+**2026-06-15 21:30**
+the capture text
+```
+
+The `text` payload ends with a **single** `%0A`, not two: Bear's prepend inserts its own separator newline before the existing content, so one trailing newline yields exactly one blank line between consecutive captures (verified — two newlines produced a double gap). The newest capture's header sits directly under the `# Inbox` title (Bear splices prepended text right after the H1); that's expected.
+
+Editable via Settings. Four placeholders, all encoded with **`.alphanumerics`** (strict) on substitution — not `.urlQueryAllowed`, which leaves `&`/`#`/`=` unescaped and corrupts the URL when captured content contains them:
 
 - `{content}` — captured text
 - `{time}` — `HH:mm`
 - `{date}` — `yyyy-MM-dd`
+- `{datetime}` — `yyyy-MM-dd HH:mm` (used in the bold header)
 
-Stored in `UserDefaults` under key `"uriTemplate"`. The default template is restored if the stored value is empty / whitespace-only.
+Stored in `UserDefaults` under key `"uriTemplate"`. The default is used if the stored value is empty/whitespace-only **or contains `octarine://`** — a one-way supersede so a leftover pre-migration Octarine template doesn't keep firing at the old target.
 
 ## Multi-line growth
 
