@@ -56,18 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPanel(mode: LauncherModel.Mode) {
         refreshDestinations() // off the hot path; picker renders from memory
-        let panel = makeFreshPanel(mode: mode)
-        positionPanel(panel)
-        panel.orderFrontRegardless()
-        panel.makeKey()
-    }
-
-    func hidePanel() {
-        panel?.orderOut(nil)
-    }
-
-    private func makeFreshPanel(mode: LauncherModel.Mode) -> LauncherPanel {
-        panel?.orderOut(nil)
+        let panel = ensurePanel()
         let model = LauncherModel(
             mode: mode,
             store: store,
@@ -77,15 +66,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.hidePanel()
             }
         )
-        let view = LauncherView(
+        panel.setContent(LauncherView(
             model: model,
             onHeightChange: { [weak self] height in
                 self?.panel?.resize(toHeight: height)
             }
-        )
-        let panel = LauncherPanel(rootView: view)
-        self.panel = panel
-        return panel
+        ))
+        // Reset from the previous session's height (e.g. a triage session that
+        // ended at route-stage height) — a fresh panel used to get this free.
+        panel.resize(toHeight: LauncherPanel.seedHeight)
+        positionPanel(panel)
+        panel.orderFrontRegardless()
+        panel.makeKey()
+    }
+
+    func hidePanel() {
+        guard let panel, panel.isVisible else { return } // double-hide benign
+        panel.orderOut(nil)
+    }
+
+    /// The one panel for the app's lifetime — see LauncherPanel's doc comment
+    /// for why it must never be recreated per show.
+    private func ensurePanel() -> LauncherPanel {
+        if let panel { return panel }
+        let created = LauncherPanel()
+        panel = created
+        return created
     }
 
     private func positionPanel(_ panel: NSPanel) {

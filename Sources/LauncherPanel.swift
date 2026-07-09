@@ -1,15 +1,25 @@
 import AppKit
 import SwiftUI
 
+/// ONE panel for the app's lifetime — never recreated per show, never
+/// close()d. The v0.2–v0.3 per-toggle panel churn (a fresh WindowServer
+/// window seizing key on every hotkey press) is the prime suspect for a
+/// system-wide hover/tooltip failure in *other* focused apps after days of
+/// uptime. Per-show freshness comes from `setContent(_:)` instead.
 final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     static let width: CGFloat = 720
+    static let seedHeight: CGFloat = 88
 
-    init<Content: View>(rootView: Content) {
+    private let container: NSView
+    private var host: NSView?
+
+    init() {
+        container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight))
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 88),
+            contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -23,11 +33,10 @@ final class LauncherPanel: NSPanel {
         hasShadow = true
         animationBehavior = .none
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // Belt and braces: even an accidental close() must not dealloc the
+        // panel (NSPanel defaults this to true).
+        isReleasedWhenClosed = false
 
-        let host = NSHostingView(rootView: rootView)
-        host.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 88))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
         // Matches Theme.cornerRadius — the mask stays mandatory: it clips the
@@ -36,14 +45,26 @@ final class LauncherPanel: NSPanel {
         container.layer?.cornerRadius = Theme.cornerRadius
         container.layer?.cornerCurve = .continuous
         container.layer?.masksToBounds = true
-        container.addSubview(host)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            host.topAnchor.constraint(equalTo: container.topAnchor),
-            host.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
         contentView = container
+    }
+
+    /// Installs a fresh SwiftUI tree for this show. A NEW NSHostingView each
+    /// time is deliberate: replacing `rootView` on a kept hosting view would
+    /// preserve SwiftUI structural identity, so `.onAppear` focus setup and
+    /// `@FocusState` would NOT reset. A fresh hosting view reproduces the old
+    /// fresh-panel semantics with zero WindowServer involvement.
+    func setContent<Content: View>(_ rootView: Content) {
+        host?.removeFromSuperview()
+        let newHost = NSHostingView(rootView: rootView)
+        newHost.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(newHost)
+        NSLayoutConstraint.activate([
+            newHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            newHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            newHost.topAnchor.constraint(equalTo: container.topAnchor),
+            newHost.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        host = newHost
     }
 
     func resize(toHeight height: CGFloat) {
