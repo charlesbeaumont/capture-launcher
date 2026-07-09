@@ -36,6 +36,10 @@ final class LauncherPanel: NSPanel {
         // Belt and braces: even an accidental close() must not dealloc the
         // panel (NSPanel defaults this to true).
         isReleasedWhenClosed = false
+        // Key is taken exactly once per show, by the explicit makeKey() in
+        // showPanel — never incidentally from ordering or chrome clicks.
+        // (Explicit makeKey() consults canBecomeKey, not this flag.)
+        becomesKeyOnlyIfNeeded = true
 
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
