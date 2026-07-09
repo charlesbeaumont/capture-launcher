@@ -6,8 +6,12 @@ struct CaptureApp: App {
 
     var body: some Scene {
         MenuBarExtra("Capture", systemImage: "brain.fill") {
-            Button("Open Capture") { appDelegate.showPanel() }
+            Button("Open Capture") { appDelegate.showPanel(mode: .capture) }
                 .keyboardShortcut("o")
+            Button("Process Inbox") { appDelegate.showPanel(mode: .triage) }
+                .keyboardShortcut("i")
+            Button("Refresh Projects") { appDelegate.refreshDestinations() }
+                .keyboardShortcut("r")
             Divider()
             SettingsLink {
                 Text("Settings…")
@@ -20,7 +24,7 @@ struct CaptureApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
-            SettingsView()
+            SettingsView(appDelegate: appDelegate)
         }
     }
 }

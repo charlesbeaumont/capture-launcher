@@ -30,7 +30,10 @@ final class LauncherPanel: NSPanel {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 88))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        container.layer?.cornerRadius = 28
+        // Matches Theme.cornerRadius — the mask stays mandatory: it clips the
+        // hosting view's rectangular corners so windowBackgroundColor never
+        // leaks around the themed background.
+        container.layer?.cornerRadius = Theme.cornerRadius
         container.layer?.cornerCurve = .continuous
         container.layer?.masksToBounds = true
         container.addSubview(host)

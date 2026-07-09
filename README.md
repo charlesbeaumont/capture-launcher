@@ -10,13 +10,11 @@
   <a href="https://github.com/charlesbeaumont/capture-launcher/releases"><img src="https://img.shields.io/github/v/release/charlesbeaumont/capture-launcher?include_prereleases&sort=semver" alt="Release" /></a>
 </p>
 
-A tiny macOS menu-bar app. Press a global hotkey, a Spotlight-style glass bar opens, type a thought, hit Enter, the text is fired at a configurable URI scheme (default: Bear's `bear://x-callback-url/add-text` to prepend a timestamped block to a pinned "Inbox" note).
+A tiny macOS menu-bar launcher for a [Bear](https://bear.app)-based second brain. Press a global hotkey, type a thought, hit Enter — then a destination picker filters your projects, people, and personal areas as you type. Enter with nothing typed sends the thought to your Bear Inbox note; Enter on a destination files it into that project's note **immediately** (and a short-lived Claude agent moves it to the right section inside the note). A second hotkey processes the inbox backlog Tinder-style.
 
-Single purpose. No history, no recents, no fuzzy search, no plugins, no main window, no Dock icon. Lives entirely in the menu bar.
+Built around three rules: every keystroke paints in under a millisecond (no I/O on the hot path), all Bear writes go through `bearcli` with compare-and-swap safety, and a capture is never lost — any failure parks it in the Inbox with a marker.
 
-<p align="center">
-  <img src="docs/screenshot.png" alt="Capture in action — glass overlay bar over a desktop" width="720" />
-</p>
+Single purpose. No history, no plugins, no main window, no Dock icon, no daemons.
 
 ## Install
 
@@ -24,7 +22,9 @@ Single purpose. No history, no recents, no fuzzy search, no plugins, no main win
 
 1. Grab the latest `Capture-vX.Y.Z.zip` from [Releases](https://github.com/charlesbeaumont/capture-launcher/releases).
 2. Unzip and drag `Capture.app` to `/Applications`.
-3. First launch: **right-click → Open**, then confirm. Capture is ad-hoc signed (no paid Apple Developer account behind it), so Gatekeeper asks once. After that it opens normally.
+3. First launch: **right-click → Open**, then confirm. Capture is ad-hoc signed, so Gatekeeper asks once.
+
+Requires Bear 2.8+ (Capture drives Bear through the `bearcli` binary inside Bear.app). The optional filing agent needs [Claude Code](https://claude.com/claude-code) (`claude` CLI).
 
 ### Build from source
 
@@ -36,84 +36,68 @@ xcodegen generate
 open Capture.xcodeproj
 ```
 
-Then ⌘R in Xcode. No Dock icon — look in the menu bar for the brain glyph.
+Then ⌘R. No Dock icon — look for the brain glyph in the menu bar. For tight iteration, `./scripts/dev.sh` rebuilds and relaunches on every save (needs `brew install fswatch`).
 
-For tight iteration without Xcode, `./scripts/dev.sh` watches `Sources/` and `project.yml` and rebuilds + relaunches Capture on every save (needs `brew install fswatch`).
-
-## Behavior
+## Capture
 
 | Action | Result |
 |---|---|
 | `⌃⌘Space` | Toggle the bar |
-| `Enter` | Send the capture and close |
-| `Shift+Enter` | Insert a newline |
-| `Esc` | Close without sending |
+| `Enter` | Open the destination picker |
+| `Enter` again (empty) | Send to the Bear Inbox note |
+| type + `Enter` | File into the matched project / person / personal note |
+| `Shift+Enter` | Newline |
+| `↑` `↓` | Move the selection |
+| `Esc` | Back to editing, then close |
 
-The bar persists when focus shifts elsewhere — it only hides on Esc, Enter, or another hotkey press. Multi-line input grows the bar downward up to 5 lines, then scrolls internally.
+The picker list is ranked by match quality, note recency, and your recent routings. Rows show the kind as a colored badge on the right — project, person, personal, reference — with badge colors drawn from the active theme's accent palette. A dim `ms` readout shows the filter latency.
+
+Routed captures land at the end of the note's `## Captured` section (created if missing, above the tag line). If "Refine placement with Claude" is on, a detached `claude -p` run then moves the entry to the right spot per the note's own conventions — an append-at-top 1-on-1 log, a topical section, or a better-matching sub-note — and leaves it in `## Captured` when unsure.
+
+## Process Inbox
+
+`⌃⌘⇧Space` (or the menu item) triages existing inbox entries oldest-first, one at a time — prefilled and editable, with a `4/31` counter:
+
+| Action | Result |
+|---|---|
+| `Enter` → type + `Enter` | File to the matched destination and remove from the Inbox |
+| `Enter` → `Enter` (empty) | File to the general-reference note and remove from the Inbox |
+| `⌘⌫` | Discard (remove from the Inbox) |
+| `Tab` | Skip (leave in the Inbox) |
+| `Esc` | Exit |
+
+Every decision advances instantly; the Bear writes happen behind it.
+
+## The Capture registry
+
+A Bear note titled **Capture registry** (`#reference`) controls what the picker offers:
+
+```
+- project/q3-governance-guidance
+- personal/build-cto-os !paused
+- reference → <note-id>
+general-reference: <note-id>
+```
+
+`!paused` hides a destination from the default list (it still matches when you type). `→ <note-id>` overrides which note a tag files into. `general-reference:` names the triage default target. Tags that exist in Bear but not in the registry still appear, marked `·new`. Without a registry note, the tag scan alone drives the picker.
 
 ## Configuration
 
-Click the brain in the menu bar → **Settings…** (or ⌘, while the menu is open).
+Menu bar → **Settings…**: theme (Solarized Light default; Solarized Dark, Gruvbox Light/Dark, Catppuccin Latte/Mocha, Nord, Dracula, Tokyo Night, Mono Dark), both hotkeys, bearcli path, Inbox note id, registry note title, the filing agent (placement toggle / spelling-and-grammar tidy / `claude` path / model), and the fallback URI template — used only when bearcli fails, parking the capture in the Inbox with a `` → `#tag` `` marker so nothing is ever lost.
 
-The only setting is the **URI template** that's opened on Enter. Default:
-
-```
-bear://x-callback-url/add-text?id=<note-id>&mode=prepend&open_note=no&show_window=no&text=**{datetime}**%0A{content}%0A
-```
-
-Four placeholders, all strictly URL-encoded (`.alphanumerics`) on substitution:
-
-- `{content}` — captured text
-- `{time}` — current time as `HH:mm`
-- `{date}` — current date as `yyyy-MM-dd`
-- `{datetime}` — `yyyy-MM-dd HH:mm`
-
-The default **prepends** a block like the following to your Bear "Inbox" note (newest on top), without bringing Bear forward:
-
-```
-**2026-06-15 21:30**
-my thought
-
-```
-
-Edit the `id=` value to target a different Bear note, or swap the template entirely to ship captures wherever you want.
-
-## Hotkey
-
-Default is `⌃⌘Space`. To change it, edit `Sources/HotkeyName.swift`:
-
-```swift
-static let toggleLauncher = Self(
-    "toggleLauncher",
-    default: .init(.space, modifiers: [.command, .control])
-)
-```
-
-(A future iteration can expose a `KeyboardShortcuts.Recorder` UI in Settings if rebinding becomes a frequent need.)
+Logs live in `~/Library/Logs/Capture/`: `routings.jsonl` (every routing decision) and `filing.log` (agent transcripts).
 
 ## Project layout
 
 ```
-project.yml                 XcodeGen spec — single source of truth for the Xcode project
-Sources/
-  CaptureApp.swift          @main App + MenuBarExtra + Settings scene
-  AppDelegate.swift         activation policy, hotkey, panel lifecycle, fade animations
-  LauncherPanel.swift       NSPanel subclass (non-activating overlay)
-  LauncherView.swift        SwiftUI input view with .glassEffect, multi-line growth
-  DailyCapture.swift        URI template substitution + NSWorkspace.open
-  HotkeyName.swift          KeyboardShortcuts.Name.toggleLauncher
-  SettingsView.swift        URI template editor
-  Info.plist                LSUIElement=true, bundle metadata
-scripts/
-  dev.sh                    fswatch → rebuild Debug → relaunch
-  release.sh                build Release zip for GitHub Releases
+project.yml                 XcodeGen spec — single source of truth
+Sources/                    see CLAUDE.md for the per-file map
+Resources/                  app icon
+scripts/dev.sh              fswatch → rebuild → relaunch
+scripts/release.sh          build Release zip for GitHub Releases
 ```
 
-The `.xcodeproj` is generated by XcodeGen and gitignored. Regenerate after editing `project.yml` or adding/removing source files:
-
-```bash
-xcodegen generate
-```
+The `.xcodeproj` is generated and gitignored — run `xcodegen generate` after editing `project.yml` or adding source files.
 
 ## License
 

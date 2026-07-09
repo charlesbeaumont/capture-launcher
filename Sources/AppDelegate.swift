@@ -6,6 +6,10 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
 
+    let bear = BearCLI()
+    let store = DestinationStore()
+    private(set) lazy var router = CaptureRouter(bear: bear, store: store)
+
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated { configure() }
     }
@@ -13,56 +17,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configure() {
         NSApp.setActivationPolicy(.accessory)
 
+        store.loadCache()
+        refreshDestinations()
+        Task { [bear] in
+            do {
+                NSLog("bearcli version: %@", try await bear.version())
+            } catch {
+                NSLog("bearcli unavailable: %@", String(describing: error))
+            }
+        }
+
         KeyboardShortcuts.onKeyUp(for: .toggleLauncher) { [weak self] in
-            self?.togglePanel()
+            self?.togglePanel(mode: .capture)
+        }
+        KeyboardShortcuts.onKeyUp(for: .triageInbox) { [weak self] in
+            self?.togglePanel(mode: .triage)
+        }
+
+        // Dev affordance for scripts/dev.sh and headless UI checks.
+        if CommandLine.arguments.contains("--show-on-launch") {
+            showPanel(mode: .capture)
+        } else if CommandLine.arguments.contains("--triage-on-launch") {
+            showPanel(mode: .triage)
         }
     }
 
-    func togglePanel() {
+    func refreshDestinations() {
+        store.refresh(using: bear)
+    }
+
+    func togglePanel(mode: LauncherModel.Mode) {
         if panel?.isVisible == true {
             hidePanel()
         } else {
-            showPanel()
+            showPanel(mode: mode)
         }
     }
 
-    private static let fadeDuration: TimeInterval = 0.1
-
-    func showPanel() {
-        let panel = makeFreshPanel()
+    func showPanel(mode: LauncherModel.Mode) {
+        refreshDestinations() // off the hot path; picker renders from memory
+        let panel = makeFreshPanel(mode: mode)
         positionPanel(panel)
-        panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fadeDuration
-            panel.animator().alphaValue = 1
-        }
     }
 
     func hidePanel() {
-        guard let panel else { return }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = Self.fadeDuration
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            MainActor.assumeIsolated {
-                panel.orderOut(nil)
-                panel.alphaValue = 1
-            }
-        })
+        panel?.orderOut(nil)
     }
 
-    private func makeFreshPanel() -> LauncherPanel {
+    private func makeFreshPanel(mode: LauncherModel.Mode) -> LauncherPanel {
         panel?.orderOut(nil)
+        let model = LauncherModel(
+            mode: mode,
+            store: store,
+            router: router,
+            bear: bear,
+            onFinish: { [weak self] in
+                self?.hidePanel()
+            }
+        )
         let view = LauncherView(
-            onSubmit: { [weak self] text in
-                DailyCapture.send(text)
-                self?.hidePanel()
-            },
-            onCancel: { [weak self] in
-                self?.hidePanel()
-            },
+            model: model,
             onHeightChange: { [weak self] height in
                 self?.panel?.resize(toHeight: height)
             }

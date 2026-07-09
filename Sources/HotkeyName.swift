@@ -5,4 +5,9 @@ extension KeyboardShortcuts.Name {
         "toggleLauncher",
         default: .init(.space, modifiers: [.command, .control])
     )
+
+    static let triageInbox = Self(
+        "triageInbox",
+        default: .init(.space, modifiers: [.command, .control, .shift])
+    )
 }
