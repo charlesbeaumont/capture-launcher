@@ -5,6 +5,8 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
+    /// Whoever had focus before the panel took key — restored on hide.
+    private var previousApp: NSRunningApplication?
 
     let bear = BearCLI()
     let store = DestinationStore()
@@ -57,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showPanel(mode: LauncherModel.Mode) {
         refreshDestinations() // off the hot path; picker renders from memory
         let panel = ensurePanel()
+        if !panel.isVisible {
+            // Snapshot who has focus BEFORE we take key from them.
+            previousApp = NSWorkspace.shared.frontmostApplication
+        }
         let model = LauncherModel(
             mode: mode,
             store: store,
@@ -82,7 +88,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hidePanel() {
         guard let panel, panel.isVisible else { return } // double-hide benign
+        panel.makeFirstResponder(nil) // end the field-editor session before reuse
         panel.orderOut(nil)
+        handBackFocus()
+    }
+
+    /// Deterministically re-assert the previous app's key window. Bare
+    /// orderOut leaves key-window return to WindowServer heuristics — the
+    /// state suspected to decay over days (the 2026-07-08 hover bug).
+    private func handBackFocus() {
+        defer { previousApp = nil }
+        guard let previous = previousApp,
+              !previous.isTerminated,
+              previous.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              // The panel persists on focus loss: if the user switched apps
+              // while it was open, do NOT yank them back to the old app.
+              NSWorkspace.shared.frontmostApplication?.processIdentifier
+                  == previous.processIdentifier
+        else { return }
+        if !previous.activate(from: .current, options: []) {
+            NSLog("focus hand-back denied for %@", previous.bundleIdentifier ?? "?")
+        }
     }
 
     /// The one panel for the app's lifetime — see LauncherPanel's doc comment
