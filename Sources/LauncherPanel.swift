@@ -36,10 +36,10 @@ final class LauncherPanel: NSPanel {
         // Belt and braces: even an accidental close() must not dealloc the
         // panel (NSPanel defaults this to true).
         isReleasedWhenClosed = false
-        // Key is taken exactly once per show, by the explicit makeKey() in
-        // showPanel — never incidentally from ordering or chrome clicks.
-        // (Explicit makeKey() consults canBecomeKey, not this flag.)
-        becomesKeyOnlyIfNeeded = true
+        // becomesKeyOnlyIfNeeded must stay OFF (default false). With it set,
+        // key-window return to the previous app after orderOut becomes FLAKY
+        // (verified 2026-07-15: failed on the 3rd of 3 toggle cycles) — hover
+        // dies in the focused app behind us. See CLAUDE.md hard constraints.
 
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor

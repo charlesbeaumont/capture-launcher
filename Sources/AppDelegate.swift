@@ -88,7 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hidePanel() {
         guard let panel, panel.isVisible else { return } // double-hide benign
-        panel.makeFirstResponder(nil) // end the field-editor session before reuse
+        // NEVER call makeFirstResponder(nil) before orderOut: it breaks
+        // AppKit's key-window return to the previous app — hover/tooltips die
+        // in the focused app behind us, every single cycle (verified 2026-07-15
+        // with a mouseMoved-counting victim window).
         panel.orderOut(nil)
         handBackFocus()
     }
