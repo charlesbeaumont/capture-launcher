@@ -17,12 +17,11 @@ struct Theme: Identifiable {
 
     var id: String { name }
 
-    // Selection is an inverted block: foreground becomes the bar, text flips.
-    var selectionBackground: Color { foreground }
-    var selectionForeground: Color { background }
+    // Selection is an inset rounded highlight (Raycast-style); text keeps its colors.
+    var selectionBackground: Color { foreground.opacity(0.10) }
 
-    static let cornerRadius: CGFloat = 6
-    static let rowHeight: CGFloat = 26
+    static let cornerRadius: CGFloat = 16
+    static let rowHeight: CGFloat = 36
     static let listRows = 8
 
     /// Standard system font (SF Pro) — the pixel font was "a bit too much".

@@ -129,7 +129,7 @@ struct LauncherView: View {
                 }
             }
             .padding(.horizontal, 28)
-            .padding(.top, 14)
+            .padding(.top, 16)
             .padding(.bottom, 10)
 
             HStack(spacing: 10) {
@@ -162,7 +162,7 @@ struct LauncherView: View {
                     .foregroundStyle(theme.dim)
             }
             .padding(.horizontal, 28)
-            .padding(.bottom, 8)
+            .padding(.bottom, 10)
 
             DestinationListView(
                 ranked: model.ranked,
@@ -173,7 +173,7 @@ struct LauncherView: View {
             hintRow
                 .padding(.horizontal, 28)
                 .padding(.top, 6)
-                .padding(.bottom, 10)
+                .padding(.bottom, 12)
         }
     }
 
@@ -208,7 +208,7 @@ struct LauncherView: View {
             .font(theme.font(size: 16))
             .foregroundStyle(theme.dim)
             .padding(.horizontal, 28)
-            .padding(.vertical, 20)
+            .padding(.vertical, 24)
     }
 }
 

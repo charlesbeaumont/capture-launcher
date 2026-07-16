@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Fixed-viewport destination list: always `Theme.listRows` rows tall so the
 /// panel never resizes while filtering; unfilled rows stay blank. Selection
-/// is an inverted block.
+/// is an inset rounded highlight.
 struct DestinationListView: View {
     let ranked: [RankedDestination]
     let selectionIndex: Int
@@ -21,33 +21,38 @@ struct DestinationListView: View {
     private func row(_ destination: Destination, selected: Bool) -> some View {
         HStack(spacing: 8) {
             Text(destination.leafName)
-                .font(theme.font(size: 14))
-                .foregroundStyle(selected ? theme.selectionForeground : theme.foreground)
+                .font(theme.font(size: 15))
+                .foregroundStyle(theme.foreground)
                 .lineLimit(1)
             if !destination.registered {
                 Text("·new")
                     .font(theme.font(size: 11))
-                    .foregroundStyle(selected ? theme.selectionForeground.opacity(0.7) : theme.dim)
+                    .foregroundStyle(theme.dim)
             }
             if destination.paused {
                 Text("!paused")
                     .font(theme.font(size: 11))
-                    .foregroundStyle(selected ? theme.selectionForeground.opacity(0.7) : theme.dim)
+                    .foregroundStyle(theme.dim)
             }
             Spacer(minLength: 8)
             Text(destination.kind.label)
                 .font(theme.font(size: 10).weight(.semibold))
                 .foregroundStyle(theme.badgeText)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(theme.badgeColor(for: destination.kind))
                 )
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 14)
         .frame(height: Theme.rowHeight)
-        .background(selected ? theme.selectionBackground : Color.clear)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(selected ? theme.selectionBackground : Color.clear)
+        )
+        // 14 outer + 14 inner keeps row text on the app-wide 28pt gutter.
+        .padding(.horizontal, 14)
         .contentShape(Rectangle())
     }
 }
