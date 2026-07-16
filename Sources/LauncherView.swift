@@ -133,9 +133,6 @@ struct LauncherView: View {
             .padding(.bottom, 10)
 
             HStack(spacing: 10) {
-                Text(">")
-                    .font(theme.font(size: 16))
-                    .foregroundStyle(theme.accent)
                 TextField(
                     "",
                     text: $model.query,

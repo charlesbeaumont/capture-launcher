@@ -9,13 +9,27 @@ struct DestinationListView: View {
     let theme: Theme
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(ranked.prefix(Theme.listRows).enumerated()), id: \.element.id) { index, item in
-                row(item.destination, selected: index == selectionIndex)
+        ScrollViewReader { proxy in
+            ScrollView {
+                rows
             }
-            Spacer(minLength: 0)
+            .frame(height: CGFloat(Theme.listRows) * Theme.rowHeight)
+            .onChange(of: selectionIndex) { _, newIndex in
+                proxy.scrollTo(newIndex)
+            }
+            .onChange(of: ranked.count) {
+                proxy.scrollTo(0, anchor: .top)
+            }
         }
-        .frame(height: CGFloat(Theme.listRows) * Theme.rowHeight, alignment: .top)
+    }
+
+    var rows: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(ranked.enumerated()), id: \.element.id) { index, item in
+                row(item.destination, selected: index == selectionIndex)
+                    .id(index)
+            }
+        }
     }
 
     private func row(_ destination: Destination, selected: Bool) -> some View {
@@ -35,14 +49,18 @@ struct DestinationListView: View {
                     .foregroundStyle(theme.dim)
             }
             Spacer(minLength: 8)
+            let chip = theme.chip(for: destination.kind)
             Text(destination.kind.label)
                 .font(theme.font(size: 10).weight(.semibold))
-                .foregroundStyle(theme.badgeText)
+                .foregroundStyle(chip.text)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(theme.badgeColor(for: destination.kind))
+                        .fill(LinearGradient(
+                            colors: [chip.fillTop, chip.fillBottom],
+                            startPoint: .top, endPoint: .bottom
+                        ))
                 )
         }
         .padding(.horizontal, 14)

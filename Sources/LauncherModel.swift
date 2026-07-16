@@ -165,9 +165,8 @@ final class LauncherModel {
     }
 
     func moveSelection(_ delta: Int) {
-        let visible = min(ranked.count, Theme.listRows)
-        guard visible > 0 else { return }
-        selectionIndex = max(0, min(visible - 1, selectionIndex + delta))
+        guard !ranked.isEmpty else { return }
+        selectionIndex = max(0, min(ranked.count - 1, selectionIndex + delta))
     }
 
     func refilter() {
