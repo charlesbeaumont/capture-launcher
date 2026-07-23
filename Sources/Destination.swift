@@ -5,7 +5,7 @@ import Foundation
 /// destinations so the picker has a single row type.
 struct Destination: Codable, Identifiable, Hashable, Sendable {
     enum Kind: String, Codable, Sendable {
-        case project, person, personal, reference, inbox, general
+        case project, person, personal, reference, inbox, general, list
 
         var label: String {
             switch self {
@@ -46,6 +46,7 @@ struct Destination: Codable, Identifiable, Hashable, Sendable {
         if tag.hasPrefix("person/") { return .person }
         if tag.hasPrefix("personal/") { return .personal }
         if tag == "reference" { return .reference }
+        if tag.hasPrefix("list/") { return .list }
         return nil
     }
 }

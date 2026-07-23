@@ -43,6 +43,7 @@ struct Theme: Identifiable {
         .reference: Color(hex: 0xE8930C), // amber
         .general: Color(hex: 0x0C8CE9),   // info blue
         .inbox: Color(hex: 0x6E6A63),     // warm ink-gray
+        .list: Color(hex: 0xF76707),      // deep orange (running lists)
     ]
 
     var isDark: Bool {
@@ -151,6 +152,7 @@ struct Theme: Identifiable {
             .reference: Color(hex: 0xEAEDE6),
             .general: Color(hex: 0xEAEDE6),
             .inbox: Color(hex: 0xEAEDE6),
+            .list: Color(hex: 0xEAEDE6),
         ]
     )
 
