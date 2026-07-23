@@ -5,8 +5,6 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
-    /// Whoever had focus before the panel took key — restored on hide.
-    private var previousApp: NSRunningApplication?
 
     let bear = BearCLI()
     let store = DestinationStore()
@@ -59,10 +57,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showPanel(mode: LauncherModel.Mode) {
         refreshDestinations() // off the hot path; picker renders from memory
         let panel = ensurePanel()
-        if !panel.isVisible {
-            // Snapshot who has focus BEFORE we take key from them.
-            previousApp = NSWorkspace.shared.frontmostApplication
-        }
         let model = LauncherModel(
             mode: mode,
             store: store,
@@ -88,30 +82,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hidePanel() {
         guard let panel, panel.isVisible else { return } // double-hide benign
-        // NEVER call makeFirstResponder(nil) before orderOut: it breaks
-        // AppKit's key-window return to the previous app — hover/tooltips die
-        // in the focused app behind us, every single cycle (verified 2026-07-15
-        // with a mouseMoved-counting victim window).
+        // Hide is EXACTLY orderOut — nothing else. The panel is
+        // .nonactivatingPanel and we only ever orderFrontRegardless() +
+        // makeKey(), so our .accessory app never becomes the active app; the
+        // previously-focused app stays active throughout and macOS returns its
+        // key window natively on orderOut.
+        //
+        // The forced previous.activate() hand-back that used to live here was
+        // removed 2026-07: it ran on every hide and was the only thing actively
+        // reaching into another process's window state — the leading suspect
+        // for the slow, multi-day system-wide hover/tooltip decay in OTHER apps.
+        // It was insurance against an unproven "orderOut return decays over
+        // days" theory; 0.2.0's plain-orderOut was clean per-cycle.
+        //
+        // Still FORBIDDEN in this path: makeFirstResponder(nil) before orderOut
+        // (kills native key return, 100% reproducible) and
+        // becomesKeyOnlyIfNeeded=true (makes key return flaky).
         panel.orderOut(nil)
-        handBackFocus()
-    }
-
-    /// Deterministically re-assert the previous app's key window. Bare
-    /// orderOut leaves key-window return to WindowServer heuristics — the
-    /// state suspected to decay over days (the 2026-07-08 hover bug).
-    private func handBackFocus() {
-        defer { previousApp = nil }
-        guard let previous = previousApp,
-              !previous.isTerminated,
-              previous.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              // The panel persists on focus loss: if the user switched apps
-              // while it was open, do NOT yank them back to the old app.
-              NSWorkspace.shared.frontmostApplication?.processIdentifier
-                  == previous.processIdentifier
-        else { return }
-        if !previous.activate(from: .current, options: []) {
-            NSLog("focus hand-back denied for %@", previous.bundleIdentifier ?? "?")
-        }
     }
 
     /// The one panel for the app's lifetime — see LauncherPanel's doc comment
