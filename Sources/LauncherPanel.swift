@@ -11,9 +11,10 @@ final class LauncherPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     static let width: CGFloat = 720
-    static let seedHeight: CGFloat = 88
+    static let seedHeight: CGFloat = 72
 
     private let container: NSView
+    private let blur = NSVisualEffectView()
     private var host: NSView?
 
     init() {
@@ -29,11 +30,14 @@ final class LauncherPanel: NSPanel {
         )
         isFloatingPanel = true
         level = .floating
-        // Belt and braces with AppDelegate's resign-key observer. Safe only
-        // because showPanel now activates the app first; while we merely took
-        // key without activating, the system fired app-deactivated almost
-        // immediately and this auto-hid the panel on every show after the first.
-        hidesOnDeactivate = true
+        // MUST stay false, even though showPanel now activates. NSApp.activate
+        // is asynchronous: measured 2026-08-21, the app is still active=0 key=0
+        // at makeKeyAndOrderFront and only reaches active=1 key=1 ~500ms later.
+        // Any deactivate landing in that gap makes this swallow the panel
+        // entirely — the panel simply never appears. AppDelegate's resign-key
+        // observer covers dismiss-on-focus-loss with a precise signal and a
+        // benign failure mode (panel stays up).
+        hidesOnDeactivate = false
         isMovableByWindowBackground = false
         backgroundColor = .clear
         isOpaque = false
@@ -48,15 +52,34 @@ final class LauncherPanel: NSPanel {
         // (verified 2026-07-15: failed on the 3rd of 3 toggle cycles) — hover
         // dies in the focused app behind us. See CLAUDE.md hard constraints.
 
+        // The container stays FLAT. cornerRadius + masksToBounds together force
+        // offscreen rasterisation, and on macOS 26 that buffer composites
+        // opaque — no translucency, whatever we draw on top. Rounding lives on
+        // the children instead.
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        // Matches Theme.cornerRadius — the mask stays mandatory: it clips the
-        // hosting view's rectangular corners so windowBackgroundColor never
-        // leaks around the themed background.
-        container.layer?.cornerRadius = Theme.cornerRadius
-        container.layer?.cornerCurve = .continuous
-        container.layer?.masksToBounds = true
         contentView = container
+
+        // Blur is a SIBLING of the hosting view, not its parent. As the panel's
+        // contentView an NSVisualEffectView renders the whole panel opaque; via
+        // NSViewRepresentable inside SwiftUI it collapses to zero size in a
+        // ZStack. A transparent container with both pinned inside sidesteps
+        // both, and if blur ever fails the SwiftUI tint still shows alpha.
+        blur.material = .popover
+        blur.blendingMode = .behindWindow
+        blur.state = .active
+        blur.wantsLayer = true
+        blur.layer?.cornerRadius = Theme.cornerRadius
+        blur.layer?.cornerCurve = .continuous
+        blur.layer?.masksToBounds = true
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(blur)
+        NSLayoutConstraint.activate([
+            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            blur.topAnchor.constraint(equalTo: container.topAnchor),
+            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
     }
 
     /// Installs a fresh SwiftUI tree for this show. A NEW NSHostingView each
@@ -65,9 +88,21 @@ final class LauncherPanel: NSPanel {
     /// `@FocusState` would NOT reset. A fresh hosting view reproduces the old
     /// fresh-panel semantics with zero WindowServer involvement.
     func setContent<Content: View>(_ rootView: Content) {
+        // Cheap enough to re-read per show, and the theme only changes from
+        // Settings.
+        blur.isHidden = !Theme.current.usesBlur
+
         host?.removeFromSuperview()
         let newHost = NSHostingView(rootView: rootView)
         newHost.translatesAutoresizingMaskIntoConstraints = false
+        newHost.wantsLayer = true
+        newHost.layer?.cornerRadius = Theme.cornerRadius
+        newHost.layer?.cornerCurve = .continuous
+        newHost.layer?.masksToBounds = true
+        // NSHostingView ships layer.isOpaque = true on macOS 26 even with a
+        // clear background, so CoreAnimation skips alpha compositing and the
+        // blur never shows through.
+        newHost.layer?.isOpaque = false
         container.addSubview(newHost)
         NSLayoutConstraint.activate([
             newHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),

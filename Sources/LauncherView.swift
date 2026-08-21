@@ -4,7 +4,7 @@ struct LauncherView: View {
     @Bindable var model: LauncherModel
     let onHeightChange: (CGFloat) -> Void
 
-    @AppStorage(Theme.storageKey) private var themeName = Theme.solarizedLight.name
+    @AppStorage(Theme.storageKey) private var themeName = Theme.ember.name
 
     private enum Field { case compose, query }
     @FocusState private var focus: Field?
@@ -25,7 +25,8 @@ struct LauncherView: View {
             }
         }
         .frame(width: LauncherPanel.width, alignment: .leading)
-        .background(theme.background)
+        .background(theme.background.opacity(theme.backgroundOpacity))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .fixedSize(horizontal: false, vertical: true)
         .background(
             GeometryReader { geom in
@@ -55,7 +56,7 @@ struct LauncherView: View {
                 axis: .vertical
             )
                 .textFieldStyle(.plain)
-                .font(theme.font(size: 20))
+                .font(theme.font(size: 22).weight(.light))
                 .foregroundStyle(theme.foreground)
                 .tint(theme.accent)
                 .lineLimit(1...5)
@@ -70,12 +71,12 @@ struct LauncherView: View {
                     .padding(.top, 6)
             }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, model.mode == .triage ? 8 : 18)
         .overlay(alignment: .bottomLeading) {
             if model.mode == .triage {
-                hintRow.padding(.leading, 28).padding(.bottom, -8)
+                hintRow.padding(.leading, 20).padding(.bottom, -8)
             }
         }
         .padding(.bottom, model.mode == .triage ? 14 : 0)
@@ -119,7 +120,7 @@ struct LauncherView: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(model.bannerText)
                     .font(theme.font(size: 13))
-                    .foregroundStyle(theme.dim)
+                    .foregroundStyle(theme.secondary)
                     .lineLimit(model.mode == .triage ? 4 : 2)
                 Spacer(minLength: 8)
                 if let counter = model.counterText {
@@ -128,7 +129,7 @@ struct LauncherView: View {
                         .foregroundStyle(theme.dim)
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 20)
             .padding(.top, 16)
             .padding(.bottom, 10)
 
@@ -139,7 +140,7 @@ struct LauncherView: View {
                     prompt: Text(model.queryPlaceholder).foregroundColor(theme.dim)
                 )
                     .textFieldStyle(.plain)
-                    .font(theme.font(size: 16))
+                    .font(theme.font(size: 22).weight(.light))
                     .foregroundStyle(theme.foreground)
                     .tint(theme.accent)
                     .focused($focus, equals: .query)
@@ -155,11 +156,14 @@ struct LauncherView: View {
                         handleQueryKey(press)
                     }
                 Text(String(format: "%.1fms", model.lastFilterMS))
-                    .font(theme.font(size: 10))
+                    .font(theme.font(size: 11))
                     .foregroundStyle(theme.dim)
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 20)
             .padding(.bottom, 10)
+
+            // Full bleed, no inset — Gyors' query/list separator.
+            Divider().opacity(0.3)
 
             DestinationListView(
                 ranked: model.ranked,
@@ -168,7 +172,7 @@ struct LauncherView: View {
             )
 
             hintRow
-                .padding(.horizontal, 28)
+                .padding(.horizontal, 20)
                 .padding(.top, 6)
                 .padding(.bottom, 12)
         }
@@ -196,15 +200,15 @@ struct LauncherView: View {
 
     private var hintRow: some View {
         Text(model.hintText)
-            .font(theme.font(size: 10))
+            .font(theme.font(size: 11))
             .foregroundStyle(theme.dim)
     }
 
     private func statusRow(_ text: String) -> some View {
         Text(text)
             .font(theme.font(size: 16))
-            .foregroundStyle(theme.dim)
-            .padding(.horizontal, 28)
+            .foregroundStyle(theme.secondary)
+            .padding(.horizontal, 20)
             .padding(.vertical, 24)
     }
 }

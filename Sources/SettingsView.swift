@@ -4,7 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     let appDelegate: AppDelegate
 
-    @AppStorage(Theme.storageKey) private var themeName = Theme.solarizedLight.name
+    @AppStorage(Theme.storageKey) private var themeName = Theme.ember.name
     @AppStorage(DailyCapture.templateKey) private var uriTemplate = DailyCapture.defaultTemplate
     @AppStorage(BearCLI.pathKey) private var bearcliPath = BearCLI.defaultPath
     @AppStorage(DestinationStore.inboxNoteIdKey) private var inboxNoteId = DestinationStore.defaultInboxNoteId
