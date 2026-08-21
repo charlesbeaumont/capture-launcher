@@ -20,13 +20,20 @@ final class LauncherPanel: NSPanel {
         container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight))
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight),
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            // No .fullSizeContentView: it is only meaningful alongside .titled,
+            // and without that macOS 26 falls back to a content backing that
+            // ignores isOpaque = false — killing translucency outright.
+            styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
         )
         isFloatingPanel = true
         level = .floating
-        hidesOnDeactivate = false
+        // Belt and braces with AppDelegate's resign-key observer. Safe only
+        // because showPanel now activates the app first; while we merely took
+        // key without activating, the system fired app-deactivated almost
+        // immediately and this auto-hid the panel on every show after the first.
+        hidesOnDeactivate = true
         isMovableByWindowBackground = false
         backgroundColor = .clear
         isOpaque = false
