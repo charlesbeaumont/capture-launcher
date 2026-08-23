@@ -5,10 +5,6 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
-    /// Block-based observers do not auto-deregister; hold the token so deinit
-    /// can balance the addObserver in `ensurePanel`.
-    private var resignKeyObserver: NSObjectProtocol?
-
     let bear = BearCLI()
     let store = DestinationStore()
     private(set) lazy var router = CaptureRouter(bear: bear, store: store)
@@ -114,38 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let panel { return panel }
         let created = LauncherPanel()
         panel = created
-        // Installed here, not in showPanel, so it can never accumulate one
-        // observer per show. Scoped to `created` so the Settings window's own
-        // resign-key does not dismiss the panel.
-        //
-        // Losing key is NOT on its own a dismiss signal. NSApp.activate is
-        // asynchronous, so early in a show we can hold the panel while the app
-        // is not yet active, and a stage with no focusable view (triage's
-        // .loading — no TextField to take first responder) drops key on its
-        // own. Both used to hide the panel the instant it opened.
-        //
-        // The real signal is "another app took over", i.e. we are no longer the
-        // active app. Check that one runloop hop later, because isActive has
-        // not necessarily flipped yet when this notification fires.
-        resignKeyObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification,
-            object: created,
-            queue: .main
-        ) { [weak self] _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard !NSApp.isActive else { return }
-                    self?.hidePanel()
-                }
-            }
-        }
+        // NO resign-key observer, and hidesOnDeactivate stays false: the bar
+        // persists when focus is lost. Only Esc, Enter and the hotkey hide it,
+        // all of which funnel through hidePanel(). Charles tried click-away
+        // dismissal on 2026-08-23 and wanted it gone the same day.
         return created
-    }
-
-    isolated deinit {
-        if let resignKeyObserver {
-            NotificationCenter.default.removeObserver(resignKeyObserver)
-        }
     }
 
     private func positionPanel(_ panel: NSPanel) {
