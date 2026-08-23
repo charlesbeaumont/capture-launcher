@@ -14,7 +14,6 @@ final class LauncherPanel: NSPanel {
     static let seedHeight: CGFloat = 72
 
     private let container: NSView
-    private let blur = NSVisualEffectView()
     private var host: NSView?
 
     init() {
@@ -59,27 +58,6 @@ final class LauncherPanel: NSPanel {
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
         contentView = container
-
-        // Blur is a SIBLING of the hosting view, not its parent. As the panel's
-        // contentView an NSVisualEffectView renders the whole panel opaque; via
-        // NSViewRepresentable inside SwiftUI it collapses to zero size in a
-        // ZStack. A transparent container with both pinned inside sidesteps
-        // both, and if blur ever fails the SwiftUI tint still shows alpha.
-        blur.material = .popover
-        blur.blendingMode = .behindWindow
-        blur.state = .active
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = Theme.cornerRadius
-        blur.layer?.cornerCurve = .continuous
-        blur.layer?.masksToBounds = true
-        blur.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(blur)
-        NSLayoutConstraint.activate([
-            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            blur.topAnchor.constraint(equalTo: container.topAnchor),
-            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
     }
 
     /// Installs a fresh SwiftUI tree for this show. A NEW NSHostingView each
@@ -88,9 +66,11 @@ final class LauncherPanel: NSPanel {
     /// `@FocusState` would NOT reset. A fresh hosting view reproduces the old
     /// fresh-panel semantics with zero WindowServer involvement.
     func setContent<Content: View>(_ rootView: Content) {
-        // Cheap enough to re-read per show, and the theme only changes from
-        // Settings.
-        blur.isHidden = !Theme.current.usesBlur
+        // Pin the panel's appearance to the theme's darkness. Without this the
+        // panel inherits the system appearance, so every AppKit-drawn detail —
+        // caret, selection, scrollers, and the TextField placeholder — comes
+        // out in light-mode colours on a dark theme and reads as near-invisible.
+        appearance = NSAppearance(named: Theme.current.isDark ? .darkAqua : .aqua)
 
         host?.removeFromSuperview()
         let newHost = NSHostingView(rootView: rootView)
@@ -99,10 +79,6 @@ final class LauncherPanel: NSPanel {
         newHost.layer?.cornerRadius = Theme.cornerRadius
         newHost.layer?.cornerCurve = .continuous
         newHost.layer?.masksToBounds = true
-        // NSHostingView ships layer.isOpaque = true on macOS 26 even with a
-        // clear background, so CoreAnimation skips alpha compositing and the
-        // blur never shows through.
-        newHost.layer?.isOpaque = false
         container.addSubview(newHost)
         NSLayoutConstraint.activate([
             newHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),

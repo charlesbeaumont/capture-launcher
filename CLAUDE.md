@@ -22,7 +22,7 @@ The point is **speed**: hotkey → bar → Enter → gone. Lives entirely as a m
    - **`Divider().opacity(0.3)`** full-bleed between the query row and the list.
    - **TheyDo chips** right-aligned per row (2026-07, replaced rainbow badges Charles disliked): one shared hue set `Theme.theydoKinds` (violet/pink/teal/amber/blue/ink-gray/orange for lists/grape for agendas), a pastel **gradient** fill + same-hue tinted text via `Theme.chip(for:)`, derived against each theme's background/foreground so chips adapt to light/dark. `kindColors` stays per-theme-overridable (Mono Dark overrides to stay monochrome).
    - Fixed-height 8-row **scrollable** viewport (empty query lists *all* destinations; the panel never resizes while filtering — only on stage transitions).
-   - Placeholder text must use `prompt: Text(...).foregroundColor(theme.dim)` — default placeholders ignore the theme and vanish on dark themes.
+   - Placeholder text must be explicitly themed via `prompt: Text(...).foregroundColor(theme.secondary)` — default placeholders ignore the theme and vanish on dark themes. `secondary`, not `dim`: `dim` is the tertiary tone and reads too dark for a placeholder (Charles, 2026-08-21).
 
 ## Project layout
 

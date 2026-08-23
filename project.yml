@@ -34,7 +34,7 @@ targets:
         PRODUCT_NAME: "Capture"
         PRODUCT_BUNDLE_IDENTIFIER: com.charlesbeaumont.Capture
         INFOPLIST_FILE: Sources/Info.plist
-        MARKETING_VERSION: "0.5.3"
-        CURRENT_PROJECT_VERSION: "10"
+        MARKETING_VERSION: "0.6.0"
+        CURRENT_PROJECT_VERSION: "11"
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES

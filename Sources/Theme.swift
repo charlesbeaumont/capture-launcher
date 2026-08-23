@@ -4,11 +4,13 @@ import SwiftUI
 /// Flat, performance-look visual language, modelled on Gyors' theme schema. One
 /// struct literal per theme; adding a theme means adding an entry to `all`.
 ///
-/// Text runs three tiers — `foreground` (primary), `secondary` (real content
-/// that isn't the headline), `dim` (hints, placeholders, the ms readout). Never
-/// bake `.opacity()` into a text colour: over a translucent panel the alpha
-/// multiplies with the substrate and the text goes mushy. Alpha on
-/// `selectionBackground` is fine — that's a background, not text.
+/// Text runs three tiers — `foreground` (primary), `secondary` (placeholders
+/// and other real content that isn't the headline), `dim` (hints, the ms
+/// readout). Never bake `.opacity()` into a text colour; use a solid hex. Alpha
+/// on `selectionBackground` is fine — that's a background, not text.
+///
+/// Panels are opaque. Translucency was tried on 2026-08-21 and removed the same
+/// day: Charles found the blur invisible in practice and didn't want it.
 ///
 /// Kind badges are TheyDo-style chips: one shared hue per kind (`theydoKinds`,
 /// still overridable per theme via `kindColors`), with a pastel gradient fill
@@ -21,9 +23,6 @@ struct Theme: Identifiable {
     let secondary: Color
     let dim: Color
     let accent: Color
-    /// Alpha of the background tint over the blur substrate.
-    var backgroundOpacity: Double = 0.92
-    var usesBlur: Bool = true
     /// Multiplier on `accent` for the selected row's fill.
     var selectionOpacity: Double = 0.22
     var kindColors: [Destination.Kind: Color] = Theme.theydoKinds
@@ -92,8 +91,19 @@ struct Theme: Identifiable {
         foreground: Color(hex: 0xFBF3EC),
         secondary: Color(hex: 0xA89B91),
         dim: Color(hex: 0x6B5E54),
-        accent: Color(hex: 0xF97316),
-        backgroundOpacity: 0.88
+        accent: Color(hex: 0xF97316)
+    )
+
+    /// Light counterpart to Ember: same #F97316 accent over a warm paper tint,
+    /// text tiers mirrored (dark primary, warm mid, warm tertiary).
+    static let emberLight = Theme(
+        name: "Ember Light",
+        background: Color(hex: 0xFDF8F4),
+        foreground: Color(hex: 0x2B1D16),
+        secondary: Color(hex: 0x6E5D52),
+        dim: Color(hex: 0x9C8A7D),
+        accent: Color(hex: 0xE2620A),
+        selectionOpacity: 0.18
     )
 
     static let solarizedLight = Theme(
@@ -103,7 +113,6 @@ struct Theme: Identifiable {
         secondary: Color(hex: 0x657B83),
         dim: Color(hex: 0x93A1A1),
         accent: Color(hex: 0x268BD2),
-        backgroundOpacity: 0.96,
         selectionOpacity: 0.18
     )
 
@@ -123,7 +132,6 @@ struct Theme: Identifiable {
         secondary: Color(hex: 0x504945),
         dim: Color(hex: 0x928374),
         accent: Color(hex: 0x458588),
-        backgroundOpacity: 0.96,
         selectionOpacity: 0.18
     )
 
@@ -143,7 +151,6 @@ struct Theme: Identifiable {
         secondary: Color(hex: 0x6C6F85),
         dim: Color(hex: 0x9CA0B0),
         accent: Color(hex: 0x1E66F5),
-        backgroundOpacity: 0.96,
         selectionOpacity: 0.18
     )
 
@@ -207,7 +214,7 @@ struct Theme: Identifiable {
     )
 
     static let all: [Theme] = [
-        ember,
+        ember, emberLight,
         solarizedLight, solarizedDark,
         gruvboxLight, gruvboxDark,
         catppuccinLatte, catppuccinMocha,
@@ -216,13 +223,29 @@ struct Theme: Identifiable {
     ]
 
     static let storageKey = "themeName"
+    /// When on, `themeName` is ignored and the pair below is used instead.
+    static let followSystemKey = "themeFollowsSystem"
+    static let lightThemeKey = "themeNameLight"
+    static let darkThemeKey = "themeNameDark"
 
     static func named(_ name: String) -> Theme {
         all.first { $0.name == name } ?? .ember
     }
 
+    /// The theme for a given appearance, honouring the follow-system pairing.
+    static func resolved(dark: Bool) -> Theme {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: followSystemKey) else {
+            return named(defaults.string(forKey: storageKey) ?? "")
+        }
+        let key = dark ? darkThemeKey : lightThemeKey
+        return named(defaults.string(forKey: key) ?? (dark ? ember.name : emberLight.name))
+    }
+
+    /// AppKit-side lookup for code with no SwiftUI environment to read.
     static var current: Theme {
-        named(UserDefaults.standard.string(forKey: storageKey) ?? "")
+        resolved(dark: NSApp.effectiveAppearance
+            .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
     }
 }
 

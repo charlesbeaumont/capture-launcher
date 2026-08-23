@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         panel.setContent(LauncherView(
             model: model,
+            // Resolved per show: picks up a Settings change or a system
+            // light/dark flip without any observer.
+            theme: Theme.current,
             onHeightChange: { [weak self] height in
                 self?.panel?.resize(toHeight: height)
             }
@@ -115,16 +118,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // observer per show. Scoped to `created` so the Settings window's own
         // resign-key does not dismiss the panel.
         //
-        // Safe now that showPanel activates: a resign-key on a non-activating
-        // panel in an INACTIVE app fires for OS-internal reasons and used to
-        // make the panel vanish ~1s after showing. Once we are genuinely the
-        // active app, resign-key means a real focus loss.
+        // Losing key is NOT on its own a dismiss signal. NSApp.activate is
+        // asynchronous, so early in a show we can hold the panel while the app
+        // is not yet active, and a stage with no focusable view (triage's
+        // .loading — no TextField to take first responder) drops key on its
+        // own. Both used to hide the panel the instant it opened.
+        //
+        // The real signal is "another app took over", i.e. we are no longer the
+        // active app. Check that one runloop hop later, because isActive has
+        // not necessarily flipped yet when this notification fires.
         resignKeyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
             object: created,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hidePanel() }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard !NSApp.isActive else { return }
+                    self?.hidePanel()
+                }
+            }
         }
         return created
     }
