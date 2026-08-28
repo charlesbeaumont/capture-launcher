@@ -11,7 +11,7 @@ final class LauncherPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     static let width: CGFloat = 720
-    static let seedHeight: CGFloat = 88
+    static let seedHeight: CGFloat = 72
 
     private let container: NSView
     private var host: NSView?
@@ -20,12 +20,22 @@ final class LauncherPanel: NSPanel {
         container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight))
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.seedHeight),
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            // No .fullSizeContentView: it is only meaningful alongside .titled,
+            // and without that macOS 26 falls back to a content backing that
+            // ignores isOpaque = false — killing translucency outright.
+            styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
         )
         isFloatingPanel = true
         level = .floating
+        // MUST stay false, even though showPanel now activates. NSApp.activate
+        // is asynchronous: measured 2026-08-21, the app is still active=0 key=0
+        // at makeKeyAndOrderFront and only reaches active=1 key=1 ~500ms later.
+        // Any deactivate landing in that gap makes this swallow the panel
+        // entirely — the panel simply never appears. AppDelegate's resign-key
+        // observer covers dismiss-on-focus-loss with a precise signal and a
+        // benign failure mode (panel stays up).
         hidesOnDeactivate = false
         isMovableByWindowBackground = false
         backgroundColor = .clear
@@ -41,14 +51,12 @@ final class LauncherPanel: NSPanel {
         // (verified 2026-07-15: failed on the 3rd of 3 toggle cycles) — hover
         // dies in the focused app behind us. See CLAUDE.md hard constraints.
 
+        // The container stays FLAT. cornerRadius + masksToBounds together force
+        // offscreen rasterisation, and on macOS 26 that buffer composites
+        // opaque — no translucency, whatever we draw on top. Rounding lives on
+        // the children instead.
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        // Matches Theme.cornerRadius — the mask stays mandatory: it clips the
-        // hosting view's rectangular corners so windowBackgroundColor never
-        // leaks around the themed background.
-        container.layer?.cornerRadius = Theme.cornerRadius
-        container.layer?.cornerCurve = .continuous
-        container.layer?.masksToBounds = true
         contentView = container
     }
 
@@ -58,9 +66,19 @@ final class LauncherPanel: NSPanel {
     /// `@FocusState` would NOT reset. A fresh hosting view reproduces the old
     /// fresh-panel semantics with zero WindowServer involvement.
     func setContent<Content: View>(_ rootView: Content) {
+        // Pin the panel's appearance to the theme's darkness. Without this the
+        // panel inherits the system appearance, so every AppKit-drawn detail —
+        // caret, selection, scrollers, and the TextField placeholder — comes
+        // out in light-mode colours on a dark theme and reads as near-invisible.
+        appearance = NSAppearance(named: Theme.current.isDark ? .darkAqua : .aqua)
+
         host?.removeFromSuperview()
         let newHost = NSHostingView(rootView: rootView)
         newHost.translatesAutoresizingMaskIntoConstraints = false
+        newHost.wantsLayer = true
+        newHost.layer?.cornerRadius = Theme.cornerRadius
+        newHost.layer?.cornerCurve = .continuous
+        newHost.layer?.masksToBounds = true
         container.addSubview(newHost)
         NSLayoutConstraint.activate([
             newHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),

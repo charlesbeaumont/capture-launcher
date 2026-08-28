@@ -4,7 +4,10 @@ import SwiftUI
 struct SettingsView: View {
     let appDelegate: AppDelegate
 
-    @AppStorage(Theme.storageKey) private var themeName = Theme.solarizedLight.name
+    @AppStorage(Theme.storageKey) private var themeName = Theme.ember.name
+    @AppStorage(Theme.followSystemKey) private var followsSystem = false
+    @AppStorage(Theme.lightThemeKey) private var lightThemeName = Theme.emberLight.name
+    @AppStorage(Theme.darkThemeKey) private var darkThemeName = Theme.ember.name
     @AppStorage(DailyCapture.templateKey) private var uriTemplate = DailyCapture.defaultTemplate
     @AppStorage(BearCLI.pathKey) private var bearcliPath = BearCLI.defaultPath
     @AppStorage(DestinationStore.inboxNoteIdKey) private var inboxNoteId = DestinationStore.defaultInboxNoteId
@@ -20,9 +23,23 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Appearance") {
-                Picker("Theme", selection: $themeName) {
-                    ForEach(Theme.all) { theme in
-                        Text(theme.name).tag(theme.name)
+                Toggle("Match system light/dark", isOn: $followsSystem)
+                if followsSystem {
+                    Picker("Light theme", selection: $lightThemeName) {
+                        ForEach(Theme.all) { theme in
+                            Text(theme.name).tag(theme.name)
+                        }
+                    }
+                    Picker("Dark theme", selection: $darkThemeName) {
+                        ForEach(Theme.all) { theme in
+                            Text(theme.name).tag(theme.name)
+                        }
+                    }
+                } else {
+                    Picker("Theme", selection: $themeName) {
+                        ForEach(Theme.all) { theme in
+                            Text(theme.name).tag(theme.name)
+                        }
                     }
                 }
             }

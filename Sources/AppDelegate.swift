@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
-
     let bear = BearCLI()
     let store = DestinationStore()
     private(set) lazy var router = CaptureRouter(bear: bear, store: store)
@@ -68,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         panel.setContent(LauncherView(
             model: model,
+            // Resolved per show: picks up a Settings change or a system
+            // light/dark flip without any observer.
+            theme: Theme.current,
             onHeightChange: { [weak self] height in
                 self?.panel?.resize(toHeight: height)
             }
@@ -76,24 +78,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ended at route-stage height) — a fresh panel used to get this free.
         panel.resize(toHeight: LauncherPanel.seedHeight)
         positionPanel(panel)
-        panel.orderFrontRegardless()
-        panel.makeKey()
+        // Activate BEFORE ordering front. Taking key without activating leaves
+        // the previously-focused app active but with no key window anywhere in
+        // its process — and hover, tooltips and cursor rects all hang off
+        // .activeInKeyWindow tracking areas, so all three die at once until our
+        // panel is destroyed. That is the multi-day hover bug. Under .accessory
+        // there is no Dock icon and no menu bar, so activating is invisible.
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func hidePanel() {
         guard let panel, panel.isVisible else { return } // double-hide benign
-        // Hide is EXACTLY orderOut — nothing else. The panel is
-        // .nonactivatingPanel and we only ever orderFrontRegardless() +
-        // makeKey(), so our .accessory app never becomes the active app; the
-        // previously-focused app stays active throughout and macOS returns its
-        // key window natively on orderOut.
+        // Hide is EXACTLY orderOut — nothing else. This is the Spotlight /
+        // Alfred / Raycast model: activate on show, orderOut on hide, and let
+        // AppKit's own app-switching machinery return the previous app.
         //
-        // The forced previous.activate() hand-back that used to live here was
-        // removed 2026-07: it ran on every hide and was the only thing actively
-        // reaching into another process's window state — the leading suspect
-        // for the slow, multi-day system-wide hover/tooltip decay in OTHER apps.
-        // It was insurance against an unproven "orderOut return decays over
-        // days" theory; 0.2.0's plain-orderOut was clean per-cycle.
+        // Nothing hands focus back by force. showPanel activates us properly,
+        // so orderOut is a normal deactivation and AppKit restores the previous
+        // app as both active and key on its own.
         //
         // Still FORBIDDEN in this path: makeFirstResponder(nil) before orderOut
         // (kills native key return, 100% reproducible) and
@@ -107,6 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let panel { return panel }
         let created = LauncherPanel()
         panel = created
+        // NO resign-key observer, and hidesOnDeactivate stays false: the bar
+        // persists when focus is lost. Only Esc, Enter and the hotkey hide it,
+        // all of which funnel through hidePanel(). Charles tried click-away
+        // dismissal on 2026-08-23 and wanted it gone the same day.
         return created
     }
 

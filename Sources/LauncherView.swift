@@ -2,14 +2,15 @@ import SwiftUI
 
 struct LauncherView: View {
     @Bindable var model: LauncherModel
-    let onHeightChange: (CGFloat) -> Void
 
-    @AppStorage(Theme.storageKey) private var themeName = Theme.solarizedLight.name
+    /// Resolved by the caller, not read from the environment. `LauncherPanel`
+    /// pins its own appearance to the theme's darkness, so `colorScheme` in
+    /// here reports the theme back at us rather than the system setting.
+    let theme: Theme
+    let onHeightChange: (CGFloat) -> Void
 
     private enum Field { case compose, query }
     @FocusState private var focus: Field?
-
-    private var theme: Theme { Theme.named(themeName) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -26,6 +27,7 @@ struct LauncherView: View {
         }
         .frame(width: LauncherPanel.width, alignment: .leading)
         .background(theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .fixedSize(horizontal: false, vertical: true)
         .background(
             GeometryReader { geom in
@@ -48,18 +50,16 @@ struct LauncherView: View {
 
     private var composeStage: some View {
         HStack(alignment: .top, spacing: 12) {
-            TextField(
-                "",
-                text: $model.composeText,
-                prompt: Text(model.composePlaceholder).foregroundColor(theme.dim),
-                axis: .vertical
-            )
+            TextField("", text: $model.composeText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(theme.font(size: 20))
+                .font(theme.font(size: 22).weight(.light))
                 .foregroundStyle(theme.foreground)
                 .tint(theme.accent)
                 .lineLimit(1...5)
                 .focused($focus, equals: .compose)
+                .placeholder(model.composePlaceholder,
+                             when: model.composeText.isEmpty,
+                             theme: theme, size: 22)
                 .onKeyPress(phases: .down) { press in
                     handleComposeKey(press)
                 }
@@ -70,12 +70,12 @@ struct LauncherView: View {
                     .padding(.top, 6)
             }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, model.mode == .triage ? 8 : 18)
         .overlay(alignment: .bottomLeading) {
             if model.mode == .triage {
-                hintRow.padding(.leading, 28).padding(.bottom, -8)
+                hintRow.padding(.leading, 20).padding(.bottom, -8)
             }
         }
         .padding(.bottom, model.mode == .triage ? 14 : 0)
@@ -119,7 +119,7 @@ struct LauncherView: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(model.bannerText)
                     .font(theme.font(size: 13))
-                    .foregroundStyle(theme.dim)
+                    .foregroundStyle(theme.secondary)
                     .lineLimit(model.mode == .triage ? 4 : 2)
                 Spacer(minLength: 8)
                 if let counter = model.counterText {
@@ -128,21 +128,20 @@ struct LauncherView: View {
                         .foregroundStyle(theme.dim)
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 20)
             .padding(.top, 16)
             .padding(.bottom, 10)
 
             HStack(spacing: 10) {
-                TextField(
-                    "",
-                    text: $model.query,
-                    prompt: Text(model.queryPlaceholder).foregroundColor(theme.dim)
-                )
+                TextField("", text: $model.query)
                     .textFieldStyle(.plain)
-                    .font(theme.font(size: 16))
+                    .font(theme.font(size: 22).weight(.light))
                     .foregroundStyle(theme.foreground)
                     .tint(theme.accent)
                     .focused($focus, equals: .query)
+                    .placeholder(model.queryPlaceholder,
+                                 when: model.query.isEmpty,
+                                 theme: theme, size: 22)
                     .onKeyPress(.upArrow) {
                         model.moveSelection(-1)
                         return .handled
@@ -155,11 +154,14 @@ struct LauncherView: View {
                         handleQueryKey(press)
                     }
                 Text(String(format: "%.1fms", model.lastFilterMS))
-                    .font(theme.font(size: 10))
+                    .font(theme.font(size: 11))
                     .foregroundStyle(theme.dim)
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 20)
             .padding(.bottom, 10)
+
+            // Full bleed, no inset — Gyors' query/list separator.
+            Divider().opacity(0.3)
 
             DestinationListView(
                 ranked: model.ranked,
@@ -168,7 +170,7 @@ struct LauncherView: View {
             )
 
             hintRow
-                .padding(.horizontal, 28)
+                .padding(.horizontal, 20)
                 .padding(.top, 6)
                 .padding(.bottom, 12)
         }
@@ -196,16 +198,33 @@ struct LauncherView: View {
 
     private var hintRow: some View {
         Text(model.hintText)
-            .font(theme.font(size: 10))
+            .font(theme.font(size: 11))
             .foregroundStyle(theme.dim)
     }
 
     private func statusRow(_ text: String) -> some View {
         Text(text)
             .font(theme.font(size: 16))
-            .foregroundStyle(theme.dim)
-            .padding(.horizontal, 28)
+            .foregroundStyle(theme.secondary)
+            .padding(.horizontal, 20)
             .padding(.vertical, 24)
+    }
+}
+
+private extension View {
+    /// Own the placeholder instead of using `TextField(prompt:)`. SwiftUI
+    /// overrides the prompt's `foregroundColor` with its own control styling,
+    /// so a themed prompt renders at the system placeholder tone regardless of
+    /// what we pass — too dark on Ember (Charles, 2026-08-21).
+    func placeholder(_ text: String, when visible: Bool, theme: Theme, size: CGFloat) -> some View {
+        overlay(alignment: .topLeading) {
+            if visible {
+                Text(text)
+                    .font(theme.font(size: size).weight(.light))
+                    .foregroundStyle(theme.secondary)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
