@@ -34,20 +34,10 @@ struct DestinationListView: View {
 
     private func row(_ destination: Destination, selected: Bool) -> some View {
         HStack(spacing: 8) {
-            Text(destination.leafName)
+            Text(destination.title)
                 .font(theme.font(size: 14).weight(.medium))
                 .foregroundStyle(theme.foreground)
                 .lineLimit(1)
-            if !destination.registered {
-                Text("·new")
-                    .font(theme.font(size: 11))
-                    .foregroundStyle(theme.dim)
-            }
-            if destination.paused {
-                Text("!paused")
-                    .font(theme.font(size: 11))
-                    .foregroundStyle(theme.dim)
-            }
             Spacer(minLength: 8)
             let chip = theme.chip(for: destination.kind)
             Text(destination.kind.label)

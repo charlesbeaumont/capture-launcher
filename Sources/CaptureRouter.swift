@@ -34,7 +34,7 @@ final class CaptureRouter {
                 try await bear.casEdit(noteId: inboxId) { content in
                     Self.prepending(block: block, to: content)
                 }
-                Self.logRouting(source: "capture", text: text, tag: "inbox", noteId: inboxId)
+                Self.logRouting(source: "capture", text: text, destination: "Inbox", noteId: inboxId)
             } catch {
                 // Fallback: the original x-callback path.
                 DailyCapture.send(text)
@@ -43,24 +43,27 @@ final class CaptureRouter {
         }
     }
 
-    /// Routed capture: lands in the destination note's ## Captured section
-    /// immediately, then the filing agent repositions it.
+    /// Routed capture: lands verbatim in the destination note's section.
     func file(text: String, to destination: Destination, timestamp: Date = Date()) {
-        store.recordUsage(tag: destination.tag)
+        store.recordUsage(destination)
+        let datetime = Self.datetimeFormatter.string(from: timestamp)
         Task {
-            await fileAndVerify(text: text, to: destination, timestamp: timestamp, source: "capture")
+            await fileAndVerify(text: text, to: destination, datetime: datetime, source: "capture")
         }
     }
 
-    /// Triage decision: file the (possibly edited) text, then remove the
-    /// original block from the Inbox.
+    /// Triage decision: file the (possibly edited) text under its original
+    /// Inbox timestamp, then remove the block from the Inbox. The Inbox row
+    /// means "keep it there", so nothing moves.
     func triageRoute(entry: InboxEntry, editedText: String, to destination: Destination) {
-        store.recordUsage(tag: destination.tag)
+        guard destination.kind != .inbox else { return }
+        store.recordUsage(destination)
+        let datetime = entry.datetime ?? Self.datetimeFormatter.string(from: Date())
         Task {
             let filed = await fileAndVerify(
                 text: editedText,
                 to: destination,
-                timestamp: Date(),
+                datetime: datetime,
                 source: "triage"
             )
             guard filed else { return } // fallback already notified; block stays put
@@ -72,7 +75,7 @@ final class CaptureRouter {
     func triageDiscard(entry: InboxEntry) {
         Task {
             await removeInboxBlock(entry)
-            Self.logRouting(source: "discard", text: entry.body, tag: "-", noteId: DestinationStore.inboxNoteId)
+            Self.logRouting(source: "discard", text: entry.body, destination: "-", noteId: DestinationStore.inboxNoteId)
         }
     }
 
@@ -82,33 +85,23 @@ final class CaptureRouter {
     private func fileAndVerify(
         text: String,
         to destination: Destination,
-        timestamp: Date,
+        datetime: String,
         source: String
     ) async -> Bool {
-        guard let noteId = destination.rootNoteId else {
-            fallbackToInbox(text: text, tag: destination.tag,
-                            reason: "destination \(destination.tag) has no target note")
+        guard let noteId = destination.noteId else {
+            fallbackToInbox(text: text, destination: destination.title,
+                            reason: "\(destination.title) has no note")
             return false
         }
-        let entryLine = Self.capturedEntry(
-            text: text,
-            datetime: Self.datetimeFormatter.string(from: timestamp)
-        )
+        let line = Self.captureLine(text: text, datetime: datetime)
         do {
             try await bear.casEdit(noteId: noteId) { content in
-                Self.insertingCapture(entryLine, into: content)
+                Self.inserting(line, into: content, kind: destination.kind)
             }
-            Self.logRouting(source: source, text: text, tag: destination.tag, noteId: noteId)
-            FilingAgent.spawn(
-                noteId: noteId,
-                noteTitle: destination.rootNoteTitle ?? destination.leafName,
-                tag: destination.tag,
-                text: text,
-                datetime: Self.datetimeFormatter.string(from: timestamp)
-            )
+            Self.logRouting(source: source, text: text, destination: destination.title, noteId: noteId)
             return true
         } catch {
-            fallbackToInbox(text: text, tag: destination.tag, reason: String(describing: error))
+            fallbackToInbox(text: text, destination: destination.title, reason: String(describing: error))
             return false
         }
     }
@@ -123,20 +116,19 @@ final class CaptureRouter {
         }
     }
 
-    private func fallbackToInbox(text: String, tag: String, reason: String) {
-        // Backtick-wrapped so Bear does not tag the Inbox note with it.
-        DailyCapture.send(text, marker: tag)
-        Notify.failure("Filing to \(tag) failed — capture parked in Inbox with a marker. \(reason)")
-        Self.logRouting(source: "fallback", text: text, tag: tag, noteId: nil)
+    private func fallbackToInbox(text: String, destination: String, reason: String) {
+        DailyCapture.send(text, marker: destination)
+        Notify.failure("Filing to \(destination) failed — capture parked in Inbox with a marker. \(reason)")
+        Self.logRouting(source: "fallback", text: text, destination: destination, noteId: nil)
     }
 
     // MARK: - Pure text transforms
 
-    /// `- 2026-07-04 09:12 — text` with multi-line bodies indented under the bullet.
-    nonisolated static func capturedEntry(text: String, datetime: String) -> String {
+    /// `- **2026-07-04 09:12**: text`, the second brain's capture line, with
+    /// multi-line bodies indented under the bullet.
+    nonisolated static func captureLine(text: String, datetime: String) -> String {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let joined = lines.joined(separator: "\n  ")
-        return "- \(datetime) — \(joined)"
+        return "- **\(datetime)**: " + lines.joined(separator: "\n  ")
     }
 
     /// Prepend a capture block directly under the note's H1 (or at the very
@@ -150,44 +142,59 @@ final class CaptureRouter {
         return "\(block)\n\n\(content)"
     }
 
-    /// Insert a captured entry at the end of the `## Captured` section,
-    /// creating the section above the trailing tag block when missing.
-    nonisolated static func insertingCapture(_ entry: String, into content: String) -> String {
-        if let sectionRange = content.range(of: "## Captured") {
-            // Section ends at the next "## " heading or the trailing tag block.
-            let afterSection = content[sectionRange.upperBound...]
-            var insertionIndex: String.Index
-            if let nextHeading = afterSection.range(of: "\n## ") {
-                insertionIndex = nextHeading.lowerBound
-            } else if let tagStart = trailingTagBlockStart(of: content),
-                      tagStart > sectionRange.upperBound {
-                insertionIndex = tagStart
-            } else {
-                insertionIndex = content.endIndex
+    /// Insert `line` into the kind's section: at the top when the kind keeps
+    /// newest first, at the bottom otherwise. A missing section is created
+    /// above the trailing tag line, the only place the skills expect it.
+    nonisolated static func inserting(_ line: String, into content: String, kind: Destination.Kind) -> String {
+        let heading = kind.section
+        guard let headingRange = sectionHeadingRange(heading, in: content) else {
+            let section = "\(heading)\n\n\(line)"
+            if let tagStart = trailingTagBlockStart(of: content) {
+                let head = trimmingTrailingNewlines(String(content[..<tagStart]))
+                return head + "\n\n" + section + "\n\n" + content[tagStart...]
             }
-            // Back off over blank lines so the entry joins the list tightly.
-            var head = String(content[..<insertionIndex])
-            let tail = String(content[insertionIndex...])
-            while head.hasSuffix("\n") { head.removeLast() }
-            let separator = tail.hasPrefix("\n") ? "" : "\n"
-            return head + "\n" + entry + separator + tail
+            return trimmingTrailingNewlines(content) + "\n\n" + section + "\n"
         }
 
-        // No section yet: create it above the trailing tag block.
-        let section = "## Captured\n\n\(entry)"
-        if let tagStart = trailingTagBlockStart(of: content) {
-            var head = String(content[..<tagStart])
-            let tail = String(content[tagStart...])
-            while head.hasSuffix("\n") { head.removeLast() }
-            return head + "\n\n" + section + "\n\n" + tail
+        let bodyStart = headingRange.upperBound
+        let afterHeading = content[bodyStart...]
+        var bodyEnd = afterHeading.range(of: "\n## ")?.lowerBound ?? content.endIndex
+        if let tagStart = trailingTagBlockStart(of: content), tagStart > bodyStart, tagStart < bodyEnd {
+            bodyEnd = tagStart
         }
-        var trimmed = content
+        let body = String(content[bodyStart..<bodyEnd])
+            .trimmingCharacters(in: .newlines)
+        let newBody = body.isEmpty ? line : (kind.newestFirst ? line + "\n" + body : body + "\n" + line)
+        // The tail starts with "\n## " (next heading), a tag line, or is empty.
+        let tail = content[bodyEnd...]
+        let separator = tail.isEmpty || tail.hasPrefix("\n") ? "\n" : "\n\n"
+        return content[..<bodyStart] + "\n\n" + newBody + separator + tail
+    }
+
+    /// The heading line, matched whole so `## Captures` never matches a
+    /// longer heading that merely starts with it.
+    nonisolated private static func sectionHeadingRange(_ heading: String, in content: String) -> Range<String.Index>? {
+        var search = content.startIndex..<content.endIndex
+        while let range = content.range(of: heading, range: search) {
+            let atLineStart = range.lowerBound == content.startIndex
+                || content[content.index(before: range.lowerBound)] == "\n"
+            let rest = content[range.upperBound...].prefix { $0 != "\n" }
+            if atLineStart && rest.allSatisfy(\.isWhitespace) {
+                return range.lowerBound..<content.index(range.upperBound, offsetBy: rest.count)
+            }
+            search = range.upperBound..<content.endIndex
+        }
+        return nil
+    }
+
+    nonisolated private static func trimmingTrailingNewlines(_ text: String) -> String {
+        var trimmed = text
         while trimmed.hasSuffix("\n") { trimmed.removeLast() }
-        return trimmed + "\n\n" + section + "\n"
+        return trimmed
     }
 
     /// Index of the first line of the trailing tag-only block (Bear keeps
-    /// `#project/x`-style tags as the last line(s) of a note), or nil.
+    /// `#project`-style tags as the last line(s) of a note), or nil.
     nonisolated static func trailingTagBlockStart(of content: String) -> String.Index? {
         var lines: [(line: Substring, start: String.Index)] = []
         var lineStart = content.startIndex
@@ -240,17 +247,17 @@ final class CaptureRouter {
             .appendingPathComponent("Library/Logs/Capture/routings.jsonl")
     }
 
-    nonisolated static func logRouting(source: String, text: String, tag: String, noteId: String?) {
+    nonisolated static func logRouting(source: String, text: String, destination: String, noteId: String?) {
         struct Record: Codable {
             let ts: String
             let source: String
             let text: String
-            let tag: String
+            let destination: String
             let noteId: String?
         }
         let record = Record(
             ts: ISO8601DateFormatter().string(from: Date()),
-            source: source, text: text, tag: tag, noteId: noteId
+            source: source, text: text, destination: destination, noteId: noteId
         )
         guard var data = try? JSONEncoder().encode(record) else { return }
         data.append(Data("\n".utf8))

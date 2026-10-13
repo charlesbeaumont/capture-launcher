@@ -11,11 +11,6 @@ struct SettingsView: View {
     @AppStorage(DailyCapture.templateKey) private var uriTemplate = DailyCapture.defaultTemplate
     @AppStorage(BearCLI.pathKey) private var bearcliPath = BearCLI.defaultPath
     @AppStorage(DestinationStore.inboxNoteIdKey) private var inboxNoteId = DestinationStore.defaultInboxNoteId
-    @AppStorage(DestinationStore.registryTitleKey) private var registryTitle = DestinationStore.defaultRegistryTitle
-    @AppStorage(FilingAgent.enabledKey) private var filingAgentEnabled = true
-    @AppStorage(FilingAgent.tidyKey) private var filingAgentTidy = true
-    @AppStorage(FilingAgent.pathKey) private var claudePath = ""
-    @AppStorage(FilingAgent.modelKey) private var filingAgentModel = ""
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchError: String?
@@ -60,10 +55,6 @@ struct SettingsView: View {
                             Text("not refreshed yet — showing cache")
                                 .foregroundStyle(.orange)
                         }
-                        if !appDelegate.store.registryFound {
-                            Text("no “\(registryTitle)” note found — using tag scan only")
-                                .foregroundStyle(.orange)
-                        }
                         if let error = appDelegate.store.lastError {
                             Text(error)
                                 .foregroundStyle(.red)
@@ -73,26 +64,15 @@ struct SettingsView: View {
                     .font(.caption)
                 }
                 Button("Refresh now") { appDelegate.refreshDestinations() }
-                TextField("Registry note title", text: $registryTitle)
-                Text("A Bear note listing active destinations, one `- project/x` line each; `!paused` hides a line from the default list; `general-reference: <note-id>` names the triage default target. Maintained by your second-brain skills.")
+                Text("Every note tagged `#project`, `#personal`, `#person`, `#list` or `#agenda`, by title. Captures land verbatim as `- **date time**: text`: newest first under `## Captures` for projects and people, at the bottom for lists, under `## Topics` for agendas.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Filing") {
+            Section("Bear") {
                 TextField("bearcli path", text: $bearcliPath)
                     .font(.system(.caption, design: .monospaced))
                 TextField("Inbox note id", text: $inboxNoteId)
-                    .font(.system(.caption, design: .monospaced))
-                Toggle("Refine placement with Claude", isOn: $filingAgentEnabled)
-                Toggle("Tidy spelling & grammar", isOn: $filingAgentTidy)
-                    .disabled(!filingAgentEnabled)
-                Text("After a capture lands in a note's ## Captured section, a short-lived `claude -p` run moves it to the right spot per the note's own conventions — and, if tidying is on, fixes obvious spelling/grammar without rephrasing or translating. Log: ~/Library/Logs/Capture/filing.log")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("claude path (default ~/.local/bin/claude)", text: $claudePath)
-                    .font(.system(.caption, design: .monospaced))
-                TextField("Model override (empty = CLI default)", text: $filingAgentModel)
                     .font(.system(.caption, design: .monospaced))
             }
 

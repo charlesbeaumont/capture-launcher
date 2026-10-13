@@ -9,9 +9,9 @@ struct RankedDestination: Identifiable, Sendable {
 /// Pure per-keystroke ranking over the precomputed index. ~30 items,
 /// no allocation-heavy work — comfortably sub-millisecond.
 enum DestinationRanker {
-    /// `pinned` is the empty-query default (Inbox for capture, the
-    /// general-reference note for triage) and always occupies row 0
-    /// when the query is empty.
+    /// `pinned` is the Inbox row: it always occupies row 0 when the query is
+    /// empty, so ⏎⏎ means "straight to the Inbox" (capture) or "keep it
+    /// there" (triage).
     static func rank(
         indexed: [IndexedDestination],
         query: String,
@@ -24,7 +24,7 @@ enum DestinationRanker {
         if trimmed.isEmpty {
             var top: [RankedDestination] = []
             top.reserveCapacity(indexed.count)
-            for item in indexed where !item.destination.paused {
+            for item in indexed {
                 let score = recencyScore(item.destination, now: now)
                     + mruScore(item.destination, usageIndex)
                 top.append(RankedDestination(destination: item.destination, score: score))
@@ -57,11 +57,11 @@ enum DestinationRanker {
 
     // MARK: - Scoring
 
-    /// leaf-prefix 100 > word-boundary prefix 80 > fuzzy subsequence 40 + compactness.
+    /// title-prefix 100 > word-boundary prefix 80 > fuzzy subsequence 40 + compactness.
     static func matchQuality(_ item: IndexedDestination, query: String) -> Double? {
-        if item.normalizedLeaf.hasPrefix(query) { return 100 }
+        if item.normalizedTitle.hasPrefix(query) { return 100 }
         if item.words.contains(where: { $0.hasPrefix(query) }) { return 80 }
-        if let span = subsequenceSpan(of: query, in: item.normalizedFull) {
+        if let span = subsequenceSpan(of: query, in: item.normalizedTitle) {
             return 40 + 10 * (Double(query.count) / Double(span))
         }
         return nil
@@ -74,7 +74,7 @@ enum DestinationRanker {
     }
 
     static func mruScore(_ destination: Destination, _ usageIndex: [String: Int]) -> Double {
-        guard let index = usageIndex[destination.tag] else { return 0 }
+        guard let index = usageIndex[destination.id] else { return 0 }
         return 15 * exp(-Double(index) / 5)
     }
 

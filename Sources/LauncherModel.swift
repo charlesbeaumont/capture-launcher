@@ -71,7 +71,7 @@ final class LauncherModel {
         let fallback: String
         switch mode {
         case .capture: fallback = "enter → inbox"
-        case .triage: fallback = store.generalReference != nil ? "enter → general reference" : "enter → skip"
+        case .triage: fallback = "enter → keep in inbox"
         }
         return "route to…  \(fallback)"
     }
@@ -86,13 +86,9 @@ final class LauncherModel {
         }
     }
 
-    /// Empty-query default row: Inbox when capturing, general reference in triage.
-    private var pinnedDestination: Destination? {
-        switch mode {
-        case .capture: .inbox
-        case .triage: store.generalReference
-        }
-    }
+    /// Empty-query default row. In triage, picking it keeps the item in the
+    /// Inbox and moves on.
+    private var pinnedDestination: Destination { .inbox }
 
     // MARK: - Stage transitions
 
@@ -140,8 +136,8 @@ final class LauncherModel {
         }
     }
 
-    /// Route stage with no rows at all (triage without a general reference
-    /// and an empty query): fall back to skip.
+    /// Route stage with no rows at all (a query that matches nothing): Enter
+    /// skips in triage and does nothing in capture.
     var routeHasRows: Bool { !ranked.isEmpty }
 
     func escape() {
