@@ -65,12 +65,17 @@ actor BearCLI {
     }
 
     /// Single call returns hash + content together — the atomic CAS read.
+    ///
+    /// `cat --format json`, not `show --fields hash,content`: bearcli 2.9.x
+    /// dropped `hash` from `show`'s field set (it now errors with "Unknown
+    /// field: hash"), and a whole-note `cat` is the only source of the hash
+    /// that `overwrite --base` wants.
     func readNote(id: String) async throws -> NoteRead {
-        let data = try await run(["show", id, "--format", "json", "--fields", "hash,content"])
+        let data = try await run(["cat", id, "--format", "json"])
         do {
             return try decoder.decode(NoteRead.self, from: data)
         } catch {
-            throw Failure.badOutput("show decode: \(error)")
+            throw Failure.badOutput("cat decode: \(error)")
         }
     }
 

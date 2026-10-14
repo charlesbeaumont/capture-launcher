@@ -1,41 +1,48 @@
 import Foundation
 import Observation
 
-/// In-memory destination list backing the picker. Loaded synchronously from a
-/// JSON cache at launch (the picker is never empty), refreshed asynchronously
-/// via bearcli at launch, on every panel show, and on demand. The Capture
-/// registry note is authoritative for paused/active status and the
-/// general-reference target; the tag scan discovers new tags.
+/// In-memory destination list backing the picker, merged across enabled
+/// providers. Loaded synchronously from per-provider JSON caches at launch
+/// (the picker is never empty), refreshed asynchronously at launch, on every
+/// panel show, and on demand. A provider that fails keeps its cached rows.
 @MainActor
 @Observable
 final class DestinationStore {
-    static let registryTitleKey = "registryNoteTitle"
-    static let defaultRegistryTitle = "Capture registry"
-    static let inboxNoteIdKey = "inboxNoteID"
-    static let defaultInboxNoteId = "E01000CB-BE7D-4FCB-8340-BBE23A4569B9"
+    nonisolated static let inboxNoteIdKey = "inboxNoteID"
+    nonisolated static let defaultInboxNoteId = "E01000CB-BE7D-4FCB-8340-BBE23A4569B9"
 
+    struct ProviderState {
+        var destinations: [Destination] = []
+        var lastRefresh: Date?
+        var lastError: String?
+        var refreshing = false
+    }
+
+    let providers: [any DestinationProvider]
+    private(set) var states: [ProviderID: ProviderState] = [:]
     private(set) var destinations: [Destination] = []
     private(set) var indexed: [IndexedDestination] = []
-    private(set) var generalReference: Destination?
-    private(set) var lastRefresh: Date?
-    private(set) var lastError: String?
-    private(set) var registryFound = false
-    private(set) var refreshing = false
 
-    /// Most-recently-used destination tags, most recent first, unique.
+    /// Most-recently-used destination ids, most recent first, unique.
     private(set) var usage: [String] = []
     private(set) var usageIndex: [String: Int] = [:]
 
-    static var inboxNoteId: String {
+    init(providers: [any DestinationProvider]) {
+        self.providers = providers
+    }
+
+    nonisolated static var inboxNoteId: String {
         let stored = UserDefaults.standard.string(forKey: inboxNoteIdKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return stored.isEmpty ? defaultInboxNoteId : stored
     }
 
-    static var registryTitle: String {
-        let stored = UserDefaults.standard.string(forKey: registryTitleKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return stored.isEmpty ? defaultRegistryTitle : stored
+    func provider(_ id: ProviderID) -> (any DestinationProvider)? {
+        providers.first { $0.id == id }
+    }
+
+    func state(_ id: ProviderID) -> ProviderState {
+        states[id] ?? ProviderState()
     }
 
     // MARK: - Cache
@@ -44,42 +51,41 @@ final class DestinationStore {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Capture", isDirectory: true)
     }
-    private static var cacheURL: URL { supportDir.appendingPathComponent("destinations.json") }
-    private static var usageURL: URL { supportDir.appendingPathComponent("usage.json") }
-
-    private struct Cache: Codable {
-        var destinations: [Destination]
-        var generalReference: Destination?
-        var savedAt: Date
+    private static func cacheURL(_ id: ProviderID) -> URL {
+        supportDir.appendingPathComponent("destinations-\(id.rawValue).json")
     }
+    // v3: ids became provider-qualified (`bear:<note id>`).
+    private static var usageURL: URL { supportDir.appendingPathComponent("usage-v3.json") }
 
     func loadCache() {
         try? FileManager.default.createDirectory(at: Self.supportDir, withIntermediateDirectories: true)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: Self.cacheURL),
-           let cache = try? decoder.decode(Cache.self, from: data) {
-            publish(cache.destinations, general: cache.generalReference, refreshedAt: nil)
+        for provider in providers {
+            if let data = try? Data(contentsOf: Self.cacheURL(provider.id)),
+               let cached = try? decoder.decode([Destination].self, from: data) {
+                states[provider.id, default: ProviderState()].destinations = cached
+            }
         }
         if let data = try? Data(contentsOf: Self.usageURL),
-           let tags = try? decoder.decode([String].self, from: data) {
-            usage = tags
+           let ids = try? decoder.decode([String].self, from: data) {
+            usage = ids
             rebuildUsageIndex()
         }
+        merge()
     }
 
-    private func persistCache() {
+    private func persistCache(_ id: ProviderID) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let cache = Cache(destinations: destinations, generalReference: generalReference, savedAt: Date())
-        if let data = try? encoder.encode(cache) {
-            try? data.write(to: Self.cacheURL, options: .atomic)
+        if let data = try? encoder.encode(state(id).destinations) {
+            try? data.write(to: Self.cacheURL(id), options: .atomic)
         }
     }
 
-    func recordUsage(tag: String) {
-        usage.removeAll { $0 == tag }
-        usage.insert(tag, at: 0)
+    func recordUsage(_ destination: Destination) {
+        usage.removeAll { $0 == destination.id }
+        usage.insert(destination.id, at: 0)
         if usage.count > 50 { usage.removeLast(usage.count - 50) }
         rebuildUsageIndex()
         if let data = try? JSONEncoder().encode(usage) {
@@ -93,162 +99,41 @@ final class DestinationStore {
 
     // MARK: - Refresh
 
-    func refresh(using bear: BearCLI) {
-        guard !refreshing else { return }
-        refreshing = true
+    func refresh() {
+        for provider in providers where provider.id.isEnabled {
+            refresh(provider)
+        }
+        merge() // drops rows of providers switched off since the last refresh
+    }
+
+    private func refresh(_ provider: any DestinationProvider) {
+        let id = provider.id
+        guard !state(id).refreshing else { return }
+        states[id, default: ProviderState()].refreshing = true
         Task { [weak self] in
             do {
-                let notes = try await bear.listNotes()
-                let registryTitle = Self.registryTitle
-                let registryNote = notes.first {
-                    $0.title.compare(registryTitle, options: .caseInsensitive) == .orderedSame
-                }
-                var registryContent: String?
-                if let registryNote {
-                    registryContent = try await bear.readNote(id: registryNote.id).content
-                }
+                let fresh = try await provider.listDestinations()
                 guard let self else { return }
-                let (dests, general) = Self.build(
-                    notes: notes,
-                    registryContent: registryContent
-                )
-                self.registryFound = registryContent != nil
-                self.publish(dests, general: general, refreshedAt: Date())
-                self.lastError = nil
-                self.persistCache()
+                self.states[id, default: ProviderState()].destinations = fresh
+                self.states[id]?.lastRefresh = Date()
+                self.states[id]?.lastError = nil
+                self.persistCache(id)
+                self.merge()
             } catch {
-                self?.lastError = String(describing: error)
+                self?.states[id, default: ProviderState()].lastError = String(describing: error)
             }
-            self?.refreshing = false
+            self?.states[id]?.refreshing = false
         }
     }
 
-    private func publish(_ dests: [Destination], general: Destination?, refreshedAt: Date?) {
-        destinations = dests
-        generalReference = general
-        indexed = dests.map(IndexedDestination.init)
-        if let refreshedAt { lastRefresh = refreshedAt }
+    private func merge() {
+        destinations = Self.merged(states.filter { $0.key.isEnabled }.map(\.value.destinations))
+        indexed = destinations.map(IndexedDestination.init)
     }
 
-    // MARK: - Building the destination list (pure, testable)
-
-    struct RegistryEntry {
-        let tag: String
-        let paused: Bool
-        let explicitNoteId: String?
-    }
-
-    nonisolated static func parseRegistry(_ content: String) -> (entries: [RegistryEntry], generalReferenceId: String?) {
-        var entries: [RegistryEntry] = []
-        var generalId: String?
-        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.lowercased().hasPrefix("general-reference:") {
-                let value = line.dropFirst("general-reference:".count)
-                    .trimmingCharacters(in: .whitespaces)
-                if !value.isEmpty { generalId = value }
-                continue
-            }
-            guard line.hasPrefix("- ") else { continue }
-            var rest = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
-            var explicitId: String?
-            if let arrow = rest.range(of: "→") {
-                explicitId = rest[arrow.upperBound...].trimmingCharacters(in: .whitespaces)
-                rest = rest[..<arrow.lowerBound].trimmingCharacters(in: .whitespaces)
-            }
-            let paused = rest.contains("!paused")
-            rest = rest.replacingOccurrences(of: "!paused", with: "").trimmingCharacters(in: .whitespaces)
-            let tag = rest.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-            guard !tag.isEmpty else { continue }
-            entries.append(RegistryEntry(tag: tag, paused: paused, explicitNoteId: explicitId))
-        }
-        return (entries, generalId)
-    }
-
-    nonisolated static func build(
-        notes: [BearCLI.NoteMeta],
-        registryContent: String?
-    ) -> (destinations: [Destination], general: Destination?) {
-        // Tag scan: tag → notes carrying it (tags come back "#project/x").
-        var notesByTag: [String: [BearCLI.NoteMeta]] = [:]
-        for note in notes {
-            for rawTag in note.tags {
-                let tag = rawTag.hasPrefix("#") ? String(rawTag.dropFirst()) : rawTag
-                notesByTag[tag, default: []].append(note)
-            }
-        }
-
-        // Leaves only: drop tags that are a strict prefix (+ "/") of another tag.
-        let allTags = Set(notesByTag.keys)
-        var scanned: [String: Destination] = [:]
-        for (tag, tagNotes) in notesByTag {
-            guard let kind = Destination.kind(forTag: tag) else { continue }
-            guard !allTags.contains(where: { $0 != tag && $0.hasPrefix(tag + "/") }) else { continue }
-            let root = rootNote(among: tagNotes)
-            scanned[tag] = Destination(
-                tag: tag,
-                kind: kind,
-                rootNoteId: root?.id,
-                rootNoteTitle: root?.title,
-                lastModified: tagNotes.compactMap(\.modified).max(),
-                registered: false
-            )
-        }
-
-        var result: [String: Destination] = scanned
-        var general: Destination?
-
-        if let registryContent {
-            let (entries, generalId) = parseRegistry(registryContent)
-            for entry in entries {
-                if var dest = result[entry.tag] {
-                    dest.registered = true
-                    dest.paused = entry.paused
-                    if let explicit = entry.explicitNoteId {
-                        dest.rootNoteId = explicit
-                        dest.rootNoteTitle = notes.first { $0.id == explicit }?.title
-                    }
-                    result[entry.tag] = dest
-                } else if let explicit = entry.explicitNoteId,
-                          let kind = Destination.kind(forTag: entry.tag) {
-                    // Registry-only entry with an explicit target note.
-                    result[entry.tag] = Destination(
-                        tag: entry.tag,
-                        kind: kind,
-                        rootNoteId: explicit,
-                        rootNoteTitle: notes.first { $0.id == explicit }?.title,
-                        lastModified: notes.first { $0.id == explicit }?.modified,
-                        paused: entry.paused,
-                        registered: true
-                    )
-                }
-            }
-            if let generalId {
-                general = .general(
-                    noteId: generalId,
-                    title: notes.first { $0.id == generalId }?.title
-                )
-            }
-        } else {
-            // No registry yet: everything the scan found counts as registered.
-            for (tag, var dest) in result {
-                dest.registered = true
-                result[tag] = dest
-            }
-        }
-
-        let sorted = result.values
-            .filter { $0.rootNoteId != nil }
-            .sorted {
-                ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast)
-            }
-        return (sorted, general)
-    }
-
-    /// Root note = title without a " - <topic>" suffix; among several,
-    /// the most recently modified; fallback: most recently modified overall.
-    nonisolated private static func rootNote(among notes: [BearCLI.NoteMeta]) -> BearCLI.NoteMeta? {
-        let byRecency = notes.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
-        return byRecency.first { !$0.title.contains(" - ") } ?? byRecency.first
+    /// Most recently modified first across all providers.
+    nonisolated static func merged(_ lists: [[Destination]]) -> [Destination] {
+        lists.flatMap { $0 }
+            .sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
     }
 }

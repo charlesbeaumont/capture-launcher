@@ -18,8 +18,8 @@ enum DailyCapture {
     // by its stable id; edit the `id=` value here (or in Settings) to retarget,
     // or swap to `title=Inbox`.
     // Since v0.3 this is the FALLBACK path only — normal writes go through
-    // bearcli (see CaptureRouter). {marker} carries a backtick-wrapped
-    // destination hint on fallback-parked captures and is empty otherwise.
+    // bearcli (see CaptureRouter). {marker} carries the intended destination's
+    // title on fallback-parked captures and is empty otherwise.
     static let defaultTemplate =
         "bear://x-callback-url/add-text?id=E01000CB-BE7D-4FCB-8340-BBE23A4569B9&mode=prepend&open_note=no&show_window=no&text=**{datetime}**{marker}%0A{content}%0A"
 
@@ -44,10 +44,10 @@ enum DailyCapture {
         return f
     }()
 
-    /// `marker` (a destination tag like "project/x") is appended to the block
-    /// header as ``` → `#tag` ``` — backtick-wrapped so Bear doesn't tag the
-    /// Inbox note with it. Set on fallback-parked captures only.
-    static func send(_ text: String, marker tag: String? = nil) {
+    /// `marker` is the intended destination's title, appended to the block
+    /// header as ` → Title`: the hint the review-captures skill routes by.
+    /// Set on fallback-parked captures only.
+    static func send(_ text: String, marker title: String? = nil) {
         let template = currentTemplate()
         let now = Date()
 
@@ -60,8 +60,8 @@ enum DailyCapture {
         let time = timeFormatter.string(from: now).addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
         let date = dateFormatter.string(from: now).addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
         let datetime = datetimeFormatter.string(from: now).addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-        let marker = tag
-            .map { " → `#\($0)`" }?
+        let marker = title
+            .map { " → \($0)" }?
             .addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
 
         let uri = template

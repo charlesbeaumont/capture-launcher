@@ -9,6 +9,12 @@ struct InboxEntry: Identifiable, Hashable, Sendable {
     let exactBlock: String
 
     var id: String { exactBlock }
+
+    /// The header's timestamp, `2026-07-04 09:10` or date-only `2026-07-04`.
+    var datetime: String? {
+        guard let match = header.firstMatch(of: /\*\*(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)\*\*/) else { return nil }
+        return String(match.1)
+    }
 }
 
 /// Splits the Inbox note into capture blocks. Blocks start with a
