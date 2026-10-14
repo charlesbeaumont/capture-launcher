@@ -180,7 +180,7 @@ struct SettingsView: View {
 
     private static func accountName(_ value: Any?) -> String? {
         guard let dict = value as? [String: Any] else { return value as? String }
-        let user = dict["user"] as? [String: Any] ?? dict
+        let user = dict["you"] as? [String: Any] ?? dict
         for key in ["full_name", "name", "display_name", "email"] {
             if let name = user[key] as? String, !name.isEmpty { return name }
         }

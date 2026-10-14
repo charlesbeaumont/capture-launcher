@@ -1,8 +1,9 @@
 import Foundation
 
-/// 15Five 1-on-1 agendas over the 15Five MCP server. One destination per
-/// person Charles has 1-on-1s with; filing adds the capture as a talking
-/// point, which starts an undated 1-on-1 when none is upcoming.
+/// 15Five 1-on-1 agendas over the 15Five MCP server, its only write path for
+/// talking points. Called as a plain API with the exact tool contract: one
+/// destination per 1-on-1 person, and filing adds one talking point to the
+/// pair's current 1-on-1 (started if none exists).
 struct FifteenFiveProvider: DestinationProvider {
     let mcp: any MCPToolCaller
     var id: ProviderID { .fifteenFive }
@@ -11,110 +12,90 @@ struct FifteenFiveProvider: DestinationProvider {
     static let talkingPointTool = "add_one_on_one_talking_point"
 
     func listDestinations() async throws -> [Destination] {
-        // Argument names are undocumented; keep the live schemas next to the
-        // routing log so a changed tool is diagnosable.
+        // Diagnostic only: if 15Five changes a tool, the live schema is here.
         if let tools = try? await mcp.listTools() {
             Self.log("15five-tools.json", tools.value)
         }
-        let result = try await mcp.callTool(name: Self.listTool, arguments: MCPJSON(value: [String: Any]()))
-        Self.log("15five-counterparts.json", result.value)
-        return Self.destinations(from: result.value)
+        var people: [Counterpart] = []
+        var offset = 0
+        while true {
+            let result = try await mcp.callTool(
+                name: Self.listTool,
+                arguments: MCPJSON(value: ["params": ["limit": 100, "offset": offset]])
+            )
+            let page = try Self.decode(CounterpartsPage.self, from: result, tool: Self.listTool)
+            people += page.counterparts ?? []
+            guard page.hasMore == true, let next = page.nextOffset, next > offset else { break }
+            offset = next
+        }
+        return Self.destinations(from: people)
     }
 
     func file(text: String, datetime: String, to destination: Destination, requestID: UUID) async throws {
-        guard let ref = destination.ref else { throw MCPError.tool("no 15Five person for \(destination.title)") }
-        let tools = try await mcp.listTools().objects
-        guard let schema = tools.first(where: { $0["name"] as? String == Self.talkingPointTool })?["inputSchema"] as? [String: Any] else {
-            throw MCPError.tool("\(Self.talkingPointTool) is not offered; is Updates switched on in 15Five?")
+        guard let ref = destination.ref, let userId = Int(ref) else {
+            throw MCPError.tool("no 15Five user id for \(destination.title)")
         }
-        let arguments = try Self.talkingPointArguments(schema: schema, person: ref, text: text, requestID: requestID)
-        _ = try await mcp.callTool(name: Self.talkingPointTool, arguments: MCPJSON(value: arguments))
+        let result = try await mcp.callTool(
+            name: Self.talkingPointTool,
+            arguments: MCPJSON(value: Self.talkingPointArguments(userId: userId, text: text, requestID: requestID))
+        )
+        let receipt = try Self.decode(TalkingPointReceipt.self, from: result, tool: Self.talkingPointTool).receipt
+        guard receipt.applied || receipt.replay == true else {
+            throw MCPError.tool("\(Self.talkingPointTool) did not apply: \(receipt.summary)")
+        }
     }
 
-    // MARK: - Pure, testable
+    // MARK: - Contract (from the live tools/list schema, 2026-10-14)
 
-    /// Maps the tool's own schema onto person, text and request id.
-    nonisolated static func talkingPointArguments(
-        schema: [String: Any], person: String, text: String, requestID: UUID
-    ) throws -> [String: Any] {
-        let properties = schema["properties"] as? [String: [String: Any]] ?? [:]
-        let required = Set(schema["required"] as? [String] ?? [])
-        let names = Array(properties.keys)
-
-        func pick(_ match: (String) -> Bool) -> String? {
-            names.filter { match($0.lowercased()) }.sorted { $0.count < $1.count }.first
-        }
-        let personKey = pick { $0.contains("counterpart") }
-            ?? pick { ($0.contains("user") || $0.contains("person") || $0.contains("participant")
-                       || $0.contains("employee") || $0.contains("report")) && $0.contains("id") }
-        let textKey = pick { ["text", "title", "content", "body", "talking_point", "description"].contains($0) }
-            ?? pick { $0.contains("text") || $0.contains("title") || $0.contains("content") }
-        let requestKey = pick { $0.contains("request") || $0.contains("idempotency") }
-
-        guard let personKey, let textKey else {
-            throw MCPError.tool("can't map \(talkingPointTool) arguments: \(names.sorted())")
-        }
-        var arguments: [String: Any] = [textKey: text]
-        let personType = properties[personKey]?["type"] as? String
-        arguments[personKey] = personType == "integer" ? (Int(person) as Any? ?? person) : person
-        if let requestKey { arguments[requestKey] = requestID.uuidString }
-
-        let unmapped = required.subtracting(arguments.keys)
-        guard unmapped.isEmpty else {
-            throw MCPError.tool("\(talkingPointTool) also requires \(unmapped.sorted())")
-        }
-        return arguments
+    struct Counterpart: Decodable {
+        let userId: Int
+        let name: String
+        let nextMeetingDate: String?
     }
 
-    /// Finds the list of people in whatever shape the tool returns.
-    nonisolated static func destinations(from value: Any) -> [Destination] {
-        guard let rows = firstObjectArray(in: value) else { return [] }
-        return rows.compactMap { row -> Destination? in
-            let person = ["counterpart", "user", "person", "employee"]
-                .lazy.compactMap { row[$0] as? [String: Any] }.first ?? row
-            guard let id = firstValue(person, ["id", "user_id", "counterpart_id", "person_id", "employee_id"]) ?? firstValue(row, ["counterpart_id", "user_id", "id"]),
-                  let name = name(of: person) ?? name(of: row) else { return nil }
-            let next = row.first { $0.key.lowercased().contains("next") }.flatMap { date(from: $0.value) }
-            return Destination(provider: .fifteenFive, ref: id, title: name, kind: .oneOnOne, lastModified: next)
-        }
-        .sorted { $0.title < $1.title }
+    struct CounterpartsPage: Decodable {
+        /// Defaults to empty in the schema, so it may be omitted.
+        let counterparts: [Counterpart]?
+        let hasMore: Bool?
+        let nextOffset: Int?
     }
 
-    nonisolated private static func firstObjectArray(in value: Any) -> [[String: Any]]? {
-        if let rows = value as? [[String: Any]] { return rows }
-        if let dict = value as? [String: Any] {
-            for key in dict.keys.sorted() {
-                if let rows = firstObjectArray(in: dict[key]!) { return rows }
-            }
+    struct TalkingPointReceipt: Decodable {
+        struct Receipt: Decodable {
+            let applied: Bool
+            let replay: Bool?
+            let summary: String
         }
-        return nil
+        let receipt: Receipt
     }
 
-    nonisolated private static func firstValue(_ dict: [String: Any], _ keys: [String]) -> String? {
-        for key in keys {
-            if let s = dict[key] as? String, !s.isEmpty { return s }
-            if let n = dict[key] as? NSNumber { return n.stringValue }
-        }
-        return nil
+    nonisolated static func talkingPointArguments(userId: Int, text: String, requestID: UUID) -> [String: Any] {
+        ["params": ["with_user_id": userId, "description": text, "request_id": requestID.uuidString]]
     }
 
-    nonisolated private static func name(of dict: [String: Any]) -> String? {
-        if let name = firstValue(dict, ["full_name", "name", "display_name"]) { return name }
-        let parts = [firstValue(dict, ["first_name"]), firstValue(dict, ["last_name"])].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
-    }
-
-    nonisolated private static func date(from value: Any) -> Date? {
-        if let dict = value as? [String: Any] {
-            return dict.values.lazy.compactMap { date(from: $0) }.first
-        }
-        guard let text = value as? String else { return nil }
-        let full = ISO8601DateFormatter()
-        if let d = full.date(from: text) { return d }
+    /// One row per person, ranked by their next 1-on-1 date.
+    nonisolated static func destinations(from people: [Counterpart]) -> [Destination] {
         let day = DateFormatter()
         day.locale = Locale(identifier: "en_US_POSIX")
         day.dateFormat = "yyyy-MM-dd"
-        return day.date(from: String(text.prefix(10)))
+        return people.map {
+            Destination(provider: .fifteenFive, ref: String($0.userId), title: $0.name,
+                        kind: .oneOnOne, lastModified: $0.nextMeetingDate.flatMap(day.date(from:)))
+        }
+    }
+
+    nonisolated static func decode<T: Decodable>(_ type: T.Type, from result: MCPToolResult, tool: String) throws -> T {
+        guard JSONSerialization.isValidJSONObject(result.value),
+              let data = try? JSONSerialization.data(withJSONObject: result.value) else {
+            throw MCPError.tool("\(tool) returned no JSON: \(result.text.prefix(200))")
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            throw MCPError.tool("\(tool) response changed shape: \(error)")
+        }
     }
 
     nonisolated private static func log(_ file: String, _ value: Any) {
