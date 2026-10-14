@@ -1,7 +1,7 @@
 import AppKit
-import AuthenticationServices
 import CryptoKit
 import Foundation
+import Network
 
 /// OAuth for the 15Five MCP server, as advertised at
 /// `https://my.15five.com/.well-known/oauth-authorization-server`: dynamic
@@ -15,8 +15,6 @@ enum FifteenFive {
     static let tokenURL = URL(string: "https://my.15five.com/o/token/")!
     static let revokeURL = URL(string: "https://my.15five.com/o/revoke_token/")!
     static let scope = "mcp:tools"
-    static let callbackScheme = "capture"
-    static let redirectURI = "capture://oauth/15five"
 
     /// Who the connection acts for, from `whoami`; empty when signed out.
     static let accountKey = "fifteenFive.account"
@@ -26,6 +24,7 @@ enum FifteenFive {
         case http(Int, String)
         case badResponse(String)
         case cancelled
+        case timedOut
 
         var description: String {
             switch self {
@@ -33,6 +32,7 @@ enum FifteenFive {
             case .http(let code, let body): "15Five HTTP \(code): \(body.prefix(200))"
             case .badResponse(let detail): "Unexpected 15Five response: \(detail)"
             case .cancelled: "Sign-in cancelled"
+            case .timedOut: "Sign-in timed out; try again"
             }
         }
     }
@@ -127,13 +127,13 @@ enum FifteenFiveOAuth {
                      expiresAt: Date().addingTimeInterval(lifetime))
     }
 
-    static func register() async throws -> String {
+    static func register(redirectURI: String) async throws -> String {
         var request = URLRequest(url: FifteenFive.registerURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "client_name": "Capture",
-            "redirect_uris": [FifteenFive.redirectURI],
+            "redirect_uris": [redirectURI],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
@@ -180,14 +180,18 @@ enum FifteenFiveOAuth {
     }
 }
 
-/// The interactive half: registers a client, opens the 15Five login in the
-/// browser sheet, and exchanges the code for tokens.
+/// The interactive half, as a desktop app does OAuth (RFC 8252): listen on a
+/// loopback port, register a client with that exact redirect, open the
+/// 15Five login in the default browser, and exchange the returned code.
+/// 15Five rejects custom-scheme redirects such as `capture://`.
 @MainActor
-final class FifteenFiveSignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private var session: ASWebAuthenticationSession?
-
+final class FifteenFiveSignIn {
     func run() async throws {
-        let clientId = try await FifteenFiveOAuth.register()
+        let listener = try LoopbackCallback()
+        defer { listener.stop() }
+        let redirectURI = "http://127.0.0.1:\(try await listener.start())/callback"
+
+        let clientId = try await FifteenFiveOAuth.register(redirectURI: redirectURI)
         let verifier = FifteenFiveOAuth.randomBase64URL(bytes: 32)
         let challenge = FifteenFiveOAuth.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
         let state = FifteenFiveOAuth.randomBase64URL(bytes: 16)
@@ -196,30 +200,30 @@ final class FifteenFiveSignIn: NSObject, ASWebAuthenticationPresentationContextP
         components.queryItems = [
             .init(name: "response_type", value: "code"),
             .init(name: "client_id", value: clientId),
-            .init(name: "redirect_uri", value: FifteenFive.redirectURI),
+            .init(name: "redirect_uri", value: redirectURI),
             .init(name: "scope", value: FifteenFive.scope),
             .init(name: "state", value: state),
             .init(name: "code_challenge", value: challenge),
             .init(name: "code_challenge_method", value: "S256"),
             .init(name: "resource", value: FifteenFive.resource),
         ]
+        NSWorkspace.shared.open(components.url!)
 
-        let callback = try await authorize(components.url!)
-        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        guard items.first(where: { $0.name == "state" })?.value == state else {
+        let items = try await listener.awaitCallback(timeout: 300)
+        guard items["state"] == state else {
             throw FifteenFive.AuthError.badResponse("state mismatch")
         }
-        if let error = items.first(where: { $0.name == "error" })?.value {
-            throw FifteenFive.AuthError.badResponse(error)
+        if let error = items["error"] {
+            throw error == "access_denied" ? FifteenFive.AuthError.cancelled : FifteenFive.AuthError.badResponse(error)
         }
-        guard let code = items.first(where: { $0.name == "code" })?.value else {
+        guard let code = items["code"] else {
             throw FifteenFive.AuthError.badResponse("no code in callback")
         }
 
         let token = try await FifteenFiveOAuth.token([
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": FifteenFive.redirectURI,
+            "redirect_uri": redirectURI,
             "client_id": clientId,
             "code_verifier": verifier,
             "resource": FifteenFive.resource,
@@ -230,31 +234,83 @@ final class FifteenFiveSignIn: NSObject, ASWebAuthenticationPresentationContextP
             refreshToken: token.refreshToken,
             expiresAt: token.expiresAt
         ))
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// One-shot HTTP listener on 127.0.0.1 for the OAuth redirect. Answers the
+/// browser with a short page and hands back the query parameters.
+final class LoopbackCallback: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "capture.oauth.loopback")
+    // Both touched only on `queue`.
+    private var continuation: CheckedContinuation<[String: String], Error>?
+    private var startResumed = false
+
+    init() throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
     }
 
-    private func authorize(_ url: URL) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: url,
-                callback: .customScheme(FifteenFive.callbackScheme)
-            ) { callback, error in
-                if let callback {
-                    continuation.resume(returning: callback)
-                } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-                    continuation.resume(throwing: FifteenFive.AuthError.cancelled)
-                } else {
-                    continuation.resume(throwing: error ?? FifteenFive.AuthError.cancelled)
+    /// Starts listening and returns the port the OS picked.
+    func start() async throws -> UInt16 {
+        try await withCheckedThrowingContinuation { (ready: CheckedContinuation<UInt16, Error>) in
+            listener.stateUpdateHandler = { [self] state in
+                guard !startResumed else { return }
+                switch state {
+                case .ready:
+                    startResumed = true
+                    ready.resume(returning: listener.port?.rawValue ?? 0)
+                case .failed(let error):
+                    startResumed = true
+                    ready.resume(throwing: error)
+                default: break
                 }
             }
-            session.presentationContextProvider = self
-            self.session = session
-            session.start()
+            listener.newConnectionHandler = { [weak self] connection in self?.handle(connection) }
+            listener.start(queue: queue)
         }
     }
 
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        MainActor.assumeIsolated {
-            NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible } ?? NSWindow()
+    func awaitCallback(timeout: TimeInterval) async throws -> [String: String] {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                self.continuation = continuation
+                self.queue.asyncAfter(deadline: .now() + timeout) {
+                    self.finish(.failure(FifteenFive.AuthError.timedOut))
+                }
+            }
         }
+    }
+
+    func stop() { listener.cancel() }
+
+    private func handle(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, _ in
+            let request = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            // "GET /callback?code=…&state=… HTTP/1.1"
+            let target = request.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            guard target.hasPrefix("/callback") else {
+                connection.send(content: Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),
+                                completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            let page = "<html><body style=\"font:16px -apple-system;padding:3em\">Capture is connected to 15Five. You can close this tab.</body></html>"
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(page.utf8.count)\r\nConnection: close\r\n\r\n\(page)"
+            connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+            var items: [String: String] = [:]
+            for item in URLComponents(string: "http://127.0.0.1\(target)")?.queryItems ?? [] {
+                items[item.name] = item.value
+            }
+            self?.finish(.success(items))
+        }
+    }
+
+    private func finish(_ result: Result<[String: String], Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(with: result)
     }
 }
