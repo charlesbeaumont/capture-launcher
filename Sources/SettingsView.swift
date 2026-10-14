@@ -14,6 +14,10 @@ struct SettingsView: View {
 
     @AppStorage(ProviderID.bear.enabledKey) private var bearEnabled = true
     @AppStorage(ProviderID.fifteenFive.enabledKey) private var fifteenFiveEnabled = false
+    @AppStorage(FifteenFive.accountKey) private var fifteenFiveAccount = ""
+    @State private var signingIn = false
+    @State private var signInError: String?
+    @State private var signIn = FifteenFiveSignIn()
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchError: String?
@@ -64,6 +68,21 @@ struct SettingsView: View {
             Section("15Five") {
                 Toggle("1-on-1 agendas as destinations", isOn: $fifteenFiveEnabled)
                     .onChange(of: fifteenFiveEnabled) { appDelegate.refreshDestinations() }
+                LabeledContent("Account") {
+                    if signingIn {
+                        ProgressView().controlSize(.small)
+                    } else if fifteenFiveAccount.isEmpty {
+                        Button("Sign in…") { signInToFifteenFive() }
+                    } else {
+                        HStack {
+                            Text(fifteenFiveAccount).foregroundStyle(.secondary)
+                            Button("Sign out") { signOutOfFifteenFive() }
+                        }
+                    }
+                }
+                if let signInError {
+                    Text(signInError).font(.caption).foregroundStyle(.red)
+                }
                 status(.fifteenFive)
                 Button("Refresh now") { appDelegate.refreshDestinations() }
                 Text("One row per person you have 1-on-1s with. Enter adds the capture as a talking point on your next 1-on-1 with them; the other person sees it. Needs 15Five MCP Access and Updates switched on in Agents Hub > Integrations.")
@@ -128,5 +147,43 @@ struct SettingsView: View {
             }
             .font(.caption)
         }
+    }
+
+    private func signInToFifteenFive() {
+        signingIn = true
+        signInError = nil
+        Task {
+            defer { signingIn = false }
+            do {
+                try await signIn.run()
+                await appDelegate.fifteenFive.reset()
+                let whoami = try? await appDelegate.fifteenFive.callTool(name: "whoami", arguments: MCPJSON(value: [String: Any]()))
+                fifteenFiveAccount = Self.accountName(whoami?.value) ?? "Signed in"
+                fifteenFiveEnabled = true
+                appDelegate.refreshDestinations()
+            } catch FifteenFive.AuthError.cancelled {
+            } catch {
+                signInError = String(describing: error)
+            }
+        }
+    }
+
+    private func signOutOfFifteenFive() {
+        Task {
+            await FifteenFiveTokens.shared.clear()
+            await appDelegate.fifteenFive.reset()
+            fifteenFiveAccount = ""
+            fifteenFiveEnabled = false
+            appDelegate.refreshDestinations()
+        }
+    }
+
+    private static func accountName(_ value: Any?) -> String? {
+        guard let dict = value as? [String: Any] else { return value as? String }
+        let user = dict["user"] as? [String: Any] ?? dict
+        for key in ["full_name", "name", "display_name", "email"] {
+            if let name = user[key] as? String, !name.isEmpty { return name }
+        }
+        return nil
     }
 }

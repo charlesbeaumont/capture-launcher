@@ -47,7 +47,7 @@ struct Theme: Identifiable {
 
     // MARK: - TheyDo chips
 
-    /// TheyDo-like hues (violet core, warm pink, teal, orange, grape; 2026-07).
+    /// TheyDo-like hues (violet core, warm pink, teal, orange, grape, blue).
     static let theydoKinds: [Destination.Kind: Color] = [
         .project: Color(hex: 0x6B4EE6),   // violet (brand core)
         .person: Color(hex: 0xE64980),    // magenta-pink
@@ -55,6 +55,7 @@ struct Theme: Identifiable {
         .inbox: Color(hex: 0x6E6A63),     // warm ink-gray
         .list: Color(hex: 0xF76707),      // deep orange (running lists)
         .agenda: Color(hex: 0x9C36B5),    // grape (recurring-forum agendas)
+        .oneOnOne: Color(hex: 0x0C8CE9),  // info blue (15Five 1-on-1s)
     ]
 
     var isDark: Bool {
@@ -206,6 +207,7 @@ struct Theme: Identifiable {
             .inbox: Color(hex: 0xEAEDE6),
             .list: Color(hex: 0xEAEDE6),
             .agenda: Color(hex: 0xEAEDE6),
+            .oneOnOne: Color(hex: 0xEAEDE6),
         ]
     )
 

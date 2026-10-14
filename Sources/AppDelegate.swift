@@ -6,7 +6,13 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
     let bear = BearCLI()
-    private(set) lazy var store = DestinationStore(providers: [BearProvider(bear: bear)])
+    let fifteenFive = NativeMCPClient(endpoint: FifteenFive.mcpEndpoint) { forceRefresh in
+        try await FifteenFiveTokens.shared.accessToken(forceRefresh: forceRefresh)
+    }
+    private(set) lazy var store = DestinationStore(providers: [
+        BearProvider(bear: bear),
+        FifteenFiveProvider(mcp: fifteenFive),
+    ])
     private(set) lazy var router = CaptureRouter(bear: bear, store: store)
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {

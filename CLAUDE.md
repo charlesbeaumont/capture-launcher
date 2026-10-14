@@ -38,14 +38,15 @@ Sources/
   Theme.swift               Eleven Theme structs (Ember default), three text tiers, blur/opacity knobs, chip hues
   BearCLI.swift             actor — Process wrapper for bearcli, CAS casEdit core
   Destination.swift         Destination + Kind + IndexedDestination (precomputed normalization)
-  DestinationStore.swift    In-memory list + JSON cache, flat-tag discovery, MRU usage
+  DestinationStore.swift    Merged list across providers, per-provider state + cache, MRU usage
+  Destinations/             DestinationProvider protocol; BearProvider; FifteenFive{Provider,Auth}; MCPClient
   DestinationRanker.swift   Pure per-keystroke ranking (prefix > word-boundary > subsequence)
   CaptureRouter.swift       All write orchestration + pure text transforms + routings.jsonl
   InboxParser.swift         Inbox note → [InboxEntry] (oldest-first, marker/tag-line aware)
   Notify.swift              Failure-only UserNotifications
   DailyCapture.swift        FALLBACK x-callback path ({content}/{time}/{date}/{datetime}/{marker})
   HotkeyName.swift          .toggleLauncher (⌃⌘Space) + .triageInbox (⌃⌘⇧Space)
-  SettingsView.swift        Theme, hotkey recorders, destinations status, filing config, fallback template
+  SettingsView.swift        Theme, hotkeys, one section per destination (Bear, 15Five sign-in), fallback template
 Resources/
   AppIcon.icns
 scripts/
@@ -66,6 +67,10 @@ triage:   entry prefilled (editable) → picker → ⏎ dest    same, under the 
 any bearcli failure ─▶ DailyCapture.send(text, marker:) → Inbox via x-callback + notification
 ```
 
+- **Destination providers** (`Sources/Destinations/`). A `DestinationProvider` lists destinations and files a capture; `DestinationStore` merges every enabled provider into one picker list, sorted by recency, and keeps per-provider state and cache (`destinations-<provider>.json`). A failing provider keeps its cached rows. Ids are provider-qualified (`bear:<note id>`, `fifteenFive:<person id>`). Enable flags: UserDefaults `destination.<provider>.enabled` (Bear on, others off by default). The Inbox row and triage mechanics stay in `CaptureRouter`, always Bear. A failed write parks the capture in the Inbox with ` → Title` (Bear) or ` → Title (15Five)`. Adding a destination = a new provider + a case in `ProviderID` + a Settings section.
+- **15Five** (`FifteenFiveProvider`). Remote MCP at `https://my.15five.com/mcp`, the only 15Five write path: the public REST API's `/one-on-one/` is GET-only. Needs 15Five MCP **Access** and **Updates** switched on in Agents Hub > Integrations. One row per person from `list_one_on_one_counterparts`, ranked by next meeting date; Enter calls `add_one_on_one_talking_point` (starts an undated 1-on-1 if none is upcoming; the other person sees it). Talking points only, never action items (Charles, 2026-10-14). Tool argument names are undocumented, so they are mapped from the live `tools/list` schema; the schemas and last counterparts response are written to `~/Library/Logs/Capture/15five-*.json`.
+  - **Auth**: OAuth discovered at `/.well-known/oauth-authorization-server`: dynamic registration, auth code + PKCE S256, public client, refresh tokens, scope `mcp:tools`, redirect `capture://oauth/15five` via `ASWebAuthenticationSession`. Credentials live in the Keychain (`com.charlesbeaumont.Capture.15five`); `FifteenFiveTokens` serialises refreshes. Unused connections expire after 30 days: sign in again from Settings.
+  - **MCP client**: `NativeMCPClient`, a ~150-line Streamable HTTP client (initialize, tools/list, tools/call, JSON or SSE responses, one retry on 401/404) instead of the Swift MCP SDK, to keep one dependency. `MCPToolCaller` is the seam if another transport is ever wanted.
 - **Destinations follow the second brain** (`~/Workspace/second-brain/CLAUDE.md`, flattened 2026-10). Tags are flat and the title is the identity: every note tagged `#project`, `#personal`, `#person`, `#list` or `#agenda` is one destination, shown by title. `#archive`, `#unsorted`, `#reference`, `#output`, `#reflection` are never routable. No registry note, no paused state, no nested `project/x` tags; all three are gone.
 - **Write contract** (matches the `review-captures` skill): one line `- **YYYY-MM-DD HH:MM**: text`, multi-line bodies indented two spaces. Projects, personal and people: top of `## Captures` (newest first). Lists: bottom of `## Captures`. Agendas: bottom of `## Topics`. A missing section is created above the trailing tag line, or at the end when the tag isn't last. Never write anywhere else in a note.
 - **Fallback marker**: a parked capture's header gets ` → <destination title>`, the routing hint `review-captures` reads.
@@ -77,7 +82,7 @@ any bearcli failure ─▶ DailyCapture.send(text, marker:) → Inbox via x-call
 - Full build: `xcodegen generate && xcodebuild -project Capture.xcodeproj -scheme Capture -configuration Debug build`, or ⌘R in Xcode.
 - Launch with the panel already open (no hotkey needed): pass `--show-on-launch` or `--triage-on-launch` to the binary.
 - Pure logic (transforms, parser, ranker, destination discovery) can be smoke-tested by compiling the non-UI sources with a scratch `main.swift`:
-  `swiftc -enable-bare-slash-regex -target arm64-apple-macos26.0 Sources/{Notify,BearCLI,Destination,DestinationStore,DestinationRanker,InboxParser,CaptureRouter,DailyCapture}.swift /tmp/main.swift -o /tmp/t && /tmp/t`
+  `swiftc -enable-bare-slash-regex -target arm64-apple-macos26.0 Sources/{Notify,BearCLI,Destination,DestinationStore,DestinationRanker,InboxParser,CaptureRouter,DailyCapture}.swift Sources/Destinations/*.swift /tmp/main.swift -o /tmp/t && /tmp/t`
 - Behavior is otherwise verified by running the app against Bear.
 
 ## Hard constraints
