@@ -1,30 +1,48 @@
 import Foundation
 import Observation
 
-/// In-memory destination list backing the picker. Loaded synchronously from a
-/// JSON cache at launch (the picker is never empty), refreshed asynchronously
-/// via bearcli at launch, on every panel show, and on demand. Every note
-/// carrying a routable type tag is a destination; see `Destination.kind`.
+/// In-memory destination list backing the picker, merged across enabled
+/// providers. Loaded synchronously from per-provider JSON caches at launch
+/// (the picker is never empty), refreshed asynchronously at launch, on every
+/// panel show, and on demand. A provider that fails keeps its cached rows.
 @MainActor
 @Observable
 final class DestinationStore {
     nonisolated static let inboxNoteIdKey = "inboxNoteID"
     nonisolated static let defaultInboxNoteId = "E01000CB-BE7D-4FCB-8340-BBE23A4569B9"
 
+    struct ProviderState {
+        var destinations: [Destination] = []
+        var lastRefresh: Date?
+        var lastError: String?
+        var refreshing = false
+    }
+
+    let providers: [any DestinationProvider]
+    private(set) var states: [ProviderID: ProviderState] = [:]
     private(set) var destinations: [Destination] = []
     private(set) var indexed: [IndexedDestination] = []
-    private(set) var lastRefresh: Date?
-    private(set) var lastError: String?
-    private(set) var refreshing = false
 
     /// Most-recently-used destination ids, most recent first, unique.
     private(set) var usage: [String] = []
     private(set) var usageIndex: [String: Int] = [:]
 
+    init(providers: [any DestinationProvider]) {
+        self.providers = providers
+    }
+
     nonisolated static var inboxNoteId: String {
         let stored = UserDefaults.standard.string(forKey: inboxNoteIdKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return stored.isEmpty ? defaultInboxNoteId : stored
+    }
+
+    func provider(_ id: ProviderID) -> (any DestinationProvider)? {
+        providers.first { $0.id == id }
+    }
+
+    func state(_ id: ProviderID) -> ProviderState {
+        states[id] ?? ProviderState()
     }
 
     // MARK: - Cache
@@ -33,36 +51,35 @@ final class DestinationStore {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Capture", isDirectory: true)
     }
-    // v2: v1 files were keyed by nested tags (`project/x`) that no longer exist.
-    private static var cacheURL: URL { supportDir.appendingPathComponent("destinations-v2.json") }
-    private static var usageURL: URL { supportDir.appendingPathComponent("usage-v2.json") }
-
-    private struct Cache: Codable {
-        var destinations: [Destination]
-        var savedAt: Date
+    private static func cacheURL(_ id: ProviderID) -> URL {
+        supportDir.appendingPathComponent("destinations-\(id.rawValue).json")
     }
+    // v3: ids became provider-qualified (`bear:<note id>`).
+    private static var usageURL: URL { supportDir.appendingPathComponent("usage-v3.json") }
 
     func loadCache() {
         try? FileManager.default.createDirectory(at: Self.supportDir, withIntermediateDirectories: true)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: Self.cacheURL),
-           let cache = try? decoder.decode(Cache.self, from: data) {
-            publish(cache.destinations, refreshedAt: nil)
+        for provider in providers {
+            if let data = try? Data(contentsOf: Self.cacheURL(provider.id)),
+               let cached = try? decoder.decode([Destination].self, from: data) {
+                states[provider.id, default: ProviderState()].destinations = cached
+            }
         }
         if let data = try? Data(contentsOf: Self.usageURL),
-           let tags = try? decoder.decode([String].self, from: data) {
-            usage = tags
+           let ids = try? decoder.decode([String].self, from: data) {
+            usage = ids
             rebuildUsageIndex()
         }
+        merge()
     }
 
-    private func persistCache() {
+    private func persistCache(_ id: ProviderID) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let cache = Cache(destinations: destinations, savedAt: Date())
-        if let data = try? encoder.encode(cache) {
-            try? data.write(to: Self.cacheURL, options: .atomic)
+        if let data = try? encoder.encode(state(id).destinations) {
+            try? data.write(to: Self.cacheURL(id), options: .atomic)
         }
     }
 
@@ -82,41 +99,41 @@ final class DestinationStore {
 
     // MARK: - Refresh
 
-    func refresh(using bear: BearCLI) {
-        guard !refreshing else { return }
-        refreshing = true
+    func refresh() {
+        for provider in providers where provider.id.isEnabled {
+            refresh(provider)
+        }
+        merge() // drops rows of providers switched off since the last refresh
+    }
+
+    private func refresh(_ provider: any DestinationProvider) {
+        let id = provider.id
+        guard !state(id).refreshing else { return }
+        states[id, default: ProviderState()].refreshing = true
         Task { [weak self] in
             do {
-                let notes = try await bear.listNotes()
+                let fresh = try await provider.listDestinations()
                 guard let self else { return }
-                self.publish(Self.build(notes: notes), refreshedAt: Date())
-                self.lastError = nil
-                self.persistCache()
+                self.states[id, default: ProviderState()].destinations = fresh
+                self.states[id]?.lastRefresh = Date()
+                self.states[id]?.lastError = nil
+                self.persistCache(id)
+                self.merge()
             } catch {
-                self?.lastError = String(describing: error)
+                self?.states[id, default: ProviderState()].lastError = String(describing: error)
             }
-            self?.refreshing = false
+            self?.states[id]?.refreshing = false
         }
     }
 
-    private func publish(_ dests: [Destination], refreshedAt: Date?) {
-        destinations = dests
-        indexed = dests.map(IndexedDestination.init)
-        if let refreshedAt { lastRefresh = refreshedAt }
+    private func merge() {
+        destinations = Self.merged(states.filter { $0.key.isEnabled }.map(\.value.destinations))
+        indexed = destinations.map(IndexedDestination.init)
     }
 
-    // MARK: - Building the destination list (pure, testable)
-
-    /// One destination per note carrying a routable type tag, most recently
-    /// modified first. The Inbox note is excluded: it is the synthetic row.
-    nonisolated static func build(notes: [BearCLI.NoteMeta]) -> [Destination] {
-        notes
-            .compactMap { note -> Destination? in
-                guard note.id != inboxNoteId,
-                      let kind = Destination.kind(forTags: note.tags) else { return nil }
-                return Destination(noteId: note.id, title: note.title, kind: kind,
-                                   lastModified: note.modified)
-            }
+    /// Most recently modified first across all providers.
+    nonisolated static func merged(_ lists: [[Destination]]) -> [Destination] {
+        lists.flatMap { $0 }
             .sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
     }
 }

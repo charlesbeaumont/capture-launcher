@@ -6,7 +6,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: LauncherPanel?
     let bear = BearCLI()
-    let store = DestinationStore()
+    private(set) lazy var store = DestinationStore(providers: [BearProvider(bear: bear)])
     private(set) lazy var router = CaptureRouter(bear: bear, store: store)
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func refreshDestinations() {
-        store.refresh(using: bear)
+        store.refresh()
     }
 
     func togglePanel(mode: LauncherModel.Mode) {

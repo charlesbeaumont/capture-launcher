@@ -48,14 +48,14 @@ struct SettingsView: View {
                 LabeledContent("Status") {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(appDelegate.store.destinations.count) destinations")
-                        if let refreshed = appDelegate.store.lastRefresh {
+                        if let refreshed = appDelegate.store.state(.bear).lastRefresh {
                             Text("refreshed \(refreshed.formatted(date: .omitted, time: .standard))")
                                 .foregroundStyle(.secondary)
                         } else {
                             Text("not refreshed yet — showing cache")
                                 .foregroundStyle(.orange)
                         }
-                        if let error = appDelegate.store.lastError {
+                        if let error = appDelegate.store.state(.bear).lastError {
                             Text(error)
                                 .foregroundStyle(.red)
                                 .lineLimit(3)

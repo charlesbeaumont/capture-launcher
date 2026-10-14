@@ -1,52 +1,26 @@
 import Foundation
 
-/// One routable Bear note. The second brain uses flat type tags (`#project`,
-/// `#person`, …) and identifies a note by its title, so a destination is a
-/// note id, a title and a kind. The Inbox is synthetic: in capture mode it
-/// files to the Inbox note, in triage it keeps the item where it is.
+/// One routable target in the picker. `ref` is the provider's own id for it
+/// (a Bear note id, a 15Five person id). The Inbox is synthetic: in capture
+/// mode it files to the Bear Inbox note, in triage it keeps the item there.
 struct Destination: Codable, Identifiable, Hashable, Sendable {
     enum Kind: String, Codable, Sendable {
-        case inbox, project, personal, person, list, agenda
+        case inbox, project, personal, person, list, agenda, oneOnOne
 
-        var label: String { rawValue }
-
-        /// Agendas collect topics; every other note collects captures.
-        var section: String { self == .agenda ? "## Topics" : "## Captures" }
-
-        /// Project, personal and person notes keep captures newest first.
-        /// Lists and agendas are running lists, appended at the bottom.
-        var newestFirst: Bool {
-            switch self {
-            case .project, .personal, .person: true
-            case .inbox, .list, .agenda: false
-            }
-        }
+        var label: String { self == .oneOnOne ? "15Five" : rawValue }
     }
 
+    let provider: ProviderID
     /// nil only for the synthetic Inbox row.
-    let noteId: String?
+    let ref: String?
     let title: String
     let kind: Kind
     var lastModified: Date?
 
-    var id: String { noteId ?? "inbox" }
+    /// Provider-qualified, so the same person in Bear and 15Five never collide.
+    var id: String { ref.map { "\(provider.rawValue):\($0)" } ?? "inbox" }
 
-    static let inbox = Destination(noteId: nil, title: "Inbox", kind: .inbox)
-
-    /// `#archive`, `#unsorted`, `#reference` and the rest are never routable.
-    static func kind(forTags tags: [String]) -> Kind? {
-        for raw in tags {
-            switch raw.hasPrefix("#") ? String(raw.dropFirst()) : raw {
-            case "project": return .project
-            case "personal": return .personal
-            case "person": return .person
-            case "list": return .list
-            case "agenda": return .agenda
-            default: continue
-            }
-        }
-        return nil
-    }
+    static let inbox = Destination(provider: .bear, ref: nil, title: "Inbox", kind: .inbox)
 }
 
 /// Precomputed normalization so per-keystroke ranking allocates nothing.

@@ -1,10 +1,10 @@
 import Foundation
 
 /// Orchestrates all capture writes. Callers are synchronous and optimistic —
-/// the panel hides / triage advances immediately; every method runs its Bear
-/// work in a fire-and-forget Task. Invariant: a capture is NEVER lost — any
-/// bearcli failure degrades to the x-callback Inbox write with a marker plus
-/// a notification.
+/// the panel hides / triage advances immediately; every method runs its work
+/// in a fire-and-forget Task. Destinations are written by their provider; the
+/// Inbox stays Bear's. Invariant: a capture is NEVER lost — any failure
+/// degrades to the x-callback Inbox write with a marker plus a notification.
 @MainActor
 final class CaptureRouter {
     private let bear: BearCLI
@@ -88,22 +88,28 @@ final class CaptureRouter {
         datetime: String,
         source: String
     ) async -> Bool {
-        guard let noteId = destination.noteId else {
-            fallbackToInbox(text: text, destination: destination.title,
-                            reason: "\(destination.title) has no note")
+        let label = Self.markerLabel(destination)
+        guard let provider = store.provider(destination.provider), destination.provider.isEnabled else {
+            fallbackToInbox(text: text, destination: label,
+                            reason: "\(destination.provider.displayName) is switched off")
             return false
         }
-        let line = Self.captureLine(text: text, datetime: datetime)
         do {
-            try await bear.casEdit(noteId: noteId) { content in
-                Self.inserting(line, into: content, kind: destination.kind)
-            }
-            Self.logRouting(source: source, text: text, destination: destination.title, noteId: noteId)
+            try await provider.file(text: text, datetime: datetime, to: destination, requestID: UUID())
+            Self.logRouting(source: source, text: text, destination: label, noteId: destination.ref)
             return true
         } catch {
-            fallbackToInbox(text: text, destination: destination.title, reason: String(describing: error))
+            fallbackToInbox(text: text, destination: label, reason: String(describing: error))
             return false
         }
+    }
+
+    /// The title the `review-captures` skill routes by; non-Bear destinations
+    /// name their system so the parked capture says where it was going.
+    nonisolated static func markerLabel(_ destination: Destination) -> String {
+        destination.provider == .bear
+            ? destination.title
+            : "\(destination.title) (\(destination.provider.displayName))"
     }
 
     private func removeInboxBlock(_ entry: InboxEntry) async {
@@ -124,13 +130,6 @@ final class CaptureRouter {
 
     // MARK: - Pure text transforms
 
-    /// `- **2026-07-04 09:12**: text`, the second brain's capture line, with
-    /// multi-line bodies indented under the bullet.
-    nonisolated static func captureLine(text: String, datetime: String) -> String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        return "- **\(datetime)**: " + lines.joined(separator: "\n  ")
-    }
-
     /// Prepend a capture block directly under the note's H1 (or at the very
     /// top when there is none), blank-line separated from what follows.
     nonisolated static func prepending(block: String, to content: String) -> String {
@@ -140,86 +139,6 @@ final class CaptureRouter {
             return "\(head)\n\(block)\n\n\(rest)"
         }
         return "\(block)\n\n\(content)"
-    }
-
-    /// Insert `line` into the kind's section: at the top when the kind keeps
-    /// newest first, at the bottom otherwise. A missing section is created
-    /// above the trailing tag line, the only place the skills expect it.
-    nonisolated static func inserting(_ line: String, into content: String, kind: Destination.Kind) -> String {
-        let heading = kind.section
-        guard let headingRange = sectionHeadingRange(heading, in: content) else {
-            let section = "\(heading)\n\n\(line)"
-            if let tagStart = trailingTagBlockStart(of: content) {
-                let head = trimmingTrailingNewlines(String(content[..<tagStart]))
-                return head + "\n\n" + section + "\n\n" + content[tagStart...]
-            }
-            return trimmingTrailingNewlines(content) + "\n\n" + section + "\n"
-        }
-
-        let bodyStart = headingRange.upperBound
-        let afterHeading = content[bodyStart...]
-        var bodyEnd = afterHeading.range(of: "\n## ")?.lowerBound ?? content.endIndex
-        if let tagStart = trailingTagBlockStart(of: content), tagStart > bodyStart, tagStart < bodyEnd {
-            bodyEnd = tagStart
-        }
-        let body = String(content[bodyStart..<bodyEnd])
-            .trimmingCharacters(in: .newlines)
-        let newBody = body.isEmpty ? line : (kind.newestFirst ? line + "\n" + body : body + "\n" + line)
-        // The tail starts with "\n## " (next heading), a tag line, or is empty.
-        let tail = content[bodyEnd...]
-        let separator = tail.isEmpty || tail.hasPrefix("\n") ? "\n" : "\n\n"
-        return content[..<bodyStart] + "\n\n" + newBody + separator + tail
-    }
-
-    /// The heading line, matched whole so `## Captures` never matches a
-    /// longer heading that merely starts with it.
-    nonisolated private static func sectionHeadingRange(_ heading: String, in content: String) -> Range<String.Index>? {
-        var search = content.startIndex..<content.endIndex
-        while let range = content.range(of: heading, range: search) {
-            let atLineStart = range.lowerBound == content.startIndex
-                || content[content.index(before: range.lowerBound)] == "\n"
-            let rest = content[range.upperBound...].prefix { $0 != "\n" }
-            if atLineStart && rest.allSatisfy(\.isWhitespace) {
-                return range.lowerBound..<content.index(range.upperBound, offsetBy: rest.count)
-            }
-            search = range.upperBound..<content.endIndex
-        }
-        return nil
-    }
-
-    nonisolated private static func trimmingTrailingNewlines(_ text: String) -> String {
-        var trimmed = text
-        while trimmed.hasSuffix("\n") { trimmed.removeLast() }
-        return trimmed
-    }
-
-    /// Index of the first line of the trailing tag-only block (Bear keeps
-    /// `#project`-style tags as the last line(s) of a note), or nil.
-    nonisolated static func trailingTagBlockStart(of content: String) -> String.Index? {
-        var lines: [(line: Substring, start: String.Index)] = []
-        var lineStart = content.startIndex
-        for index in content.indices {
-            if content[index] == "\n" {
-                lines.append((content[lineStart..<index], lineStart))
-                lineStart = content.index(after: index)
-            }
-        }
-        lines.append((content[lineStart...], lineStart))
-
-        var tagBlockStart: String.Index?
-        for (line, start) in lines.reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty {
-                if tagBlockStart == nil { continue } // trailing blank lines
-                break
-            }
-            if InboxParser.isTagOnlyLine(line) {
-                tagBlockStart = start
-            } else {
-                break
-            }
-        }
-        return tagBlockStart
     }
 
     /// Exact-string block removal. nil = not found (idempotent no-op:
