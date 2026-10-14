@@ -12,6 +12,9 @@ struct SettingsView: View {
     @AppStorage(BearCLI.pathKey) private var bearcliPath = BearCLI.defaultPath
     @AppStorage(DestinationStore.inboxNoteIdKey) private var inboxNoteId = DestinationStore.defaultInboxNoteId
 
+    @AppStorage(ProviderID.bear.enabledKey) private var bearEnabled = true
+    @AppStorage(ProviderID.fifteenFive.enabledKey) private var fifteenFiveEnabled = false
+
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchError: String?
 
@@ -44,36 +47,28 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Process inbox", name: .triageInbox)
             }
 
-            Section("Destinations") {
-                LabeledContent("Status") {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("\(appDelegate.store.destinations.count) destinations")
-                        if let refreshed = appDelegate.store.state(.bear).lastRefresh {
-                            Text("refreshed \(refreshed.formatted(date: .omitted, time: .standard))")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("not refreshed yet — showing cache")
-                                .foregroundStyle(.orange)
-                        }
-                        if let error = appDelegate.store.state(.bear).lastError {
-                            Text(error)
-                                .foregroundStyle(.red)
-                                .lineLimit(3)
-                        }
-                    }
-                    .font(.caption)
-                }
+            Section("Bear") {
+                Toggle("Notes as destinations", isOn: $bearEnabled)
+                    .onChange(of: bearEnabled) { appDelegate.refreshDestinations() }
+                status(.bear)
                 Button("Refresh now") { appDelegate.refreshDestinations() }
-                Text("Every note tagged `#project`, `#personal`, `#person`, `#list` or `#agenda`, by title. Captures land verbatim as `- **date time**: text`: newest first under `## Captures` for projects and people, at the bottom for lists, under `## Topics` for agendas.")
+                Text("Every note tagged `#project`, `#personal`, `#person`, `#list` or `#agenda`, by title. Captures land verbatim as `- **date time**: text`: newest first under `## Captures` for projects and people, at the bottom for lists, under `## Topics` for agendas. The Inbox row always files here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Bear") {
                 TextField("bearcli path", text: $bearcliPath)
                     .font(.system(.caption, design: .monospaced))
                 TextField("Inbox note id", text: $inboxNoteId)
                     .font(.system(.caption, design: .monospaced))
+            }
+
+            Section("15Five") {
+                Toggle("1-on-1 agendas as destinations", isOn: $fifteenFiveEnabled)
+                    .onChange(of: fifteenFiveEnabled) { appDelegate.refreshDestinations() }
+                status(.fifteenFive)
+                Button("Refresh now") { appDelegate.refreshDestinations() }
+                Text("One row per person you have 1-on-1s with. Enter adds the capture as a talking point on your next 1-on-1 with them; the other person sees it. Needs 15Five MCP Access and Updates switched on in Agents Hub > Integrations.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Fallback URI template") {
@@ -111,5 +106,27 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 640)
+    }
+
+    private func status(_ id: ProviderID) -> some View {
+        let state = appDelegate.store.state(id)
+        return LabeledContent("Status") {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(state.destinations.count) destinations")
+                if let refreshed = state.lastRefresh {
+                    Text("refreshed \(refreshed.formatted(date: .omitted, time: .standard))")
+                        .foregroundStyle(.secondary)
+                } else if id.isEnabled {
+                    Text("not refreshed yet, showing cache")
+                        .foregroundStyle(.orange)
+                }
+                if let error = state.lastError {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                }
+            }
+            .font(.caption)
+        }
     }
 }

@@ -12,7 +12,7 @@ enum ProviderID: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    private var enabledKey: String { "destination.\(rawValue).enabled" }
+    var enabledKey: String { "destination.\(rawValue).enabled" }
 
     /// Bear is on unless switched off; anything needing a sign-in starts off.
     nonisolated var isEnabled: Bool {
