@@ -1,0 +1,15 @@
+I have this command for processing my inbox, but the thing is, I have these lists, and I want to process them as well. Products: I want to go through them. Sometimes I just want to keep them in the inbox, but sometimes I want to link them to a project rather.
+
+Whenever I use the command to start processing my inbox, maybe I should be able to choose which list I want to process. In addition to that, I used to be able to type the name of the tag, and then it would also match the project. I could, for example, type "project" and I would see all projects, or I type "list" and I would see all lists, or "person" and see all persons. Could you make sure I could do that again
+
+---
+
+It is not working when my inbox is empty, then the launcher just disappears after a second.
+
+---
+
+Can you replace the production app so I can test?
+
+---
+
+It is working, so can commit, merge, publish, and cleanup.
