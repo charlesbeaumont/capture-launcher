@@ -15,6 +15,8 @@ struct LauncherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             switch model.stage {
+            case .source:
+                sourceStage
             case .loading:
                 statusRow("loading…")
             case .compose:
@@ -22,7 +24,7 @@ struct LauncherView: View {
             case .route:
                 routeStage
             case .done:
-                statusRow("inbox clear")
+                statusRow(model.doneText)
             }
         }
         .frame(width: LauncherPanel.width, alignment: .leading)
@@ -39,9 +41,9 @@ struct LauncherView: View {
             onHeightChange(newHeight)
         }
         .onExitCommand { model.escape() }
-        .onAppear { focus = .compose }
+        .onAppear { focus = model.stage == .source ? .query : .compose }
         .onChange(of: model.stage) {
-            let target: Field? = model.stage == .route ? .query : .compose
+            let target: Field? = [.source, .route].contains(model.stage) ? .query : .compose
             DispatchQueue.main.async { focus = target }
         }
     }
@@ -112,6 +114,15 @@ struct LauncherView: View {
         return press.characters.contains("\u{7F}") || press.characters.contains("\u{08}")
     }
 
+    // MARK: - Source stage
+
+    private var sourceStage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            queryRow.padding(.top, 18)
+            pickerList
+        }
+    }
+
     // MARK: - Route stage
 
     private var routeStage: some View {
@@ -132,34 +143,43 @@ struct LauncherView: View {
             .padding(.top, 16)
             .padding(.bottom, 10)
 
-            HStack(spacing: 10) {
-                TextField("", text: $model.query)
-                    .textFieldStyle(.plain)
-                    .font(theme.font(size: 22).weight(.light))
-                    .foregroundStyle(theme.foreground)
-                    .tint(theme.accent)
-                    .focused($focus, equals: .query)
-                    .placeholder(model.queryPlaceholder,
-                                 when: model.query.isEmpty,
-                                 theme: theme, size: 22)
-                    .onKeyPress(.upArrow) {
-                        model.moveSelection(-1)
-                        return .handled
-                    }
-                    .onKeyPress(.downArrow) {
-                        model.moveSelection(1)
-                        return .handled
-                    }
-                    .onKeyPress(phases: .down) { press in
-                        handleQueryKey(press)
-                    }
-                Text(String(format: "%.1fms", model.lastFilterMS))
-                    .font(theme.font(size: 11))
-                    .foregroundStyle(theme.dim)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 10)
+            queryRow
+            pickerList
+        }
+    }
 
+    private var queryRow: some View {
+        HStack(spacing: 10) {
+            TextField("", text: $model.query)
+                .textFieldStyle(.plain)
+                .font(theme.font(size: 22).weight(.light))
+                .foregroundStyle(theme.foreground)
+                .tint(theme.accent)
+                .focused($focus, equals: .query)
+                .placeholder(model.queryPlaceholder,
+                             when: model.query.isEmpty,
+                             theme: theme, size: 22)
+                .onKeyPress(.upArrow) {
+                    model.moveSelection(-1)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    model.moveSelection(1)
+                    return .handled
+                }
+                .onKeyPress(phases: .down) { press in
+                    handleQueryKey(press)
+                }
+            Text(String(format: "%.1fms", model.lastFilterMS))
+                .font(theme.font(size: 11))
+                .foregroundStyle(theme.dim)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
+    }
+
+    private var pickerList: some View {
+        VStack(alignment: .leading, spacing: 0) {
             // Full bleed, no inset — Gyors' query/list separator.
             Divider().opacity(0.3)
 
@@ -178,10 +198,14 @@ struct LauncherView: View {
 
     private func handleQueryKey(_ press: KeyPress) -> KeyPress.Result {
         if press.key == .return {
-            model.submitRoute()
+            if model.stage == .source {
+                model.submitSource()
+            } else {
+                model.submitRoute()
+            }
             return .handled
         }
-        if model.mode == .triage {
+        if model.mode == .triage, model.stage == .route {
             if press.key == .tab {
                 model.skip()
                 return .handled

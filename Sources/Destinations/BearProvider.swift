@@ -27,6 +27,7 @@ struct BearProvider: DestinationProvider {
         notes
             .compactMap { note -> Destination? in
                 guard note.id != DestinationStore.inboxNoteId,
+                      !note.title.isEmpty,
                       let kind = kind(forTags: note.tags) else { return nil }
                 return Destination(provider: .bear, ref: note.id, title: note.title,
                                    kind: kind, lastModified: note.modified)

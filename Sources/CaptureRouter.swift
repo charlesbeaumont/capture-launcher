@@ -53,10 +53,10 @@ final class CaptureRouter {
     }
 
     /// Triage decision: file the (possibly edited) text under its original
-    /// Inbox timestamp, then remove the block from the Inbox. The Inbox row
-    /// means "keep it there", so nothing moves.
-    func triageRoute(entry: InboxEntry, editedText: String, to destination: Destination) {
-        guard destination.kind != .inbox else { return }
+    /// timestamp, then remove the entry from its source note. Picking the
+    /// source itself means "keep it there", so nothing moves.
+    func triageRoute(entry: TriageEntry, editedText: String, to destination: Destination, from source: Destination) {
+        guard destination.id != source.id else { return }
         store.recordUsage(destination)
         let datetime = entry.datetime ?? Self.datetimeFormatter.string(from: Date())
         Task {
@@ -66,17 +66,22 @@ final class CaptureRouter {
                 datetime: datetime,
                 source: "triage"
             )
-            guard filed else { return } // fallback already notified; block stays put
-            await removeInboxBlock(entry)
+            guard filed else { return } // fallback already notified; entry stays put
+            await remove(entry, from: source)
         }
     }
 
-    /// Triage discard: remove the block, file nothing.
-    func triageDiscard(entry: InboxEntry) {
+    /// Triage discard: remove the entry, file nothing.
+    func triageDiscard(entry: TriageEntry, from source: Destination) {
         Task {
-            await removeInboxBlock(entry)
-            Self.logRouting(source: "discard", text: entry.body, destination: "-", noteId: DestinationStore.inboxNoteId)
+            await remove(entry, from: source)
+            Self.logRouting(source: "discard", text: entry.body, destination: "-", noteId: Self.noteId(of: source))
         }
+    }
+
+    /// The Inbox row carries no ref; its note id lives in Settings.
+    nonisolated static func noteId(of source: Destination) -> String {
+        source.ref ?? DestinationStore.inboxNoteId
     }
 
     // MARK: - Filing
@@ -112,13 +117,16 @@ final class CaptureRouter {
             : "\(destination.title) (\(destination.provider.displayName))"
     }
 
-    private func removeInboxBlock(_ entry: InboxEntry) async {
+    private func remove(_ entry: TriageEntry, from source: Destination) async {
+        let isInbox = source.kind == .inbox
         do {
-            try await bear.casEdit(noteId: DestinationStore.inboxNoteId) { content in
-                Self.removingBlock(entry.exactBlock, from: content)
+            try await bear.casEdit(noteId: Self.noteId(of: source)) { content in
+                isInbox
+                    ? Self.removingBlock(entry.exactBlock, from: content)
+                    : Self.removingLines(entry.exactBlock, from: content)
             }
         } catch {
-            Notify.failure("Could not remove the inbox block — it may reappear in triage. \(error)")
+            Notify.failure("Could not remove the entry from \(source.title) — it may reappear in triage. \(error)")
         }
     }
 
@@ -151,6 +159,30 @@ final class CaptureRouter {
         }
         if let range = content.range(of: block) {
             return collapseBlankRuns(content.replacingCharacters(in: range, with: ""))
+        }
+        return nil
+    }
+
+    /// Removes whole lines only, so a list item never matches the start of a
+    /// longer one. List items sit one per line, so taking a blank-line
+    /// separator with them (as `removingBlock` does) would glue the last item
+    /// to the tag line. nil = not found.
+    nonisolated static func removingLines(_ block: String, from content: String) -> String? {
+        var search = content.startIndex..<content.endIndex
+        while let range = content.range(of: block, range: search) {
+            let atLineStart = range.lowerBound == content.startIndex
+                || content[content.index(before: range.lowerBound)] == "\n"
+            let atLineEnd = range.upperBound == content.endIndex || content[range.upperBound] == "\n"
+            if atLineStart && atLineEnd {
+                var removal = range
+                if range.upperBound < content.endIndex {
+                    removal = range.lowerBound..<content.index(after: range.upperBound)
+                } else if range.lowerBound > content.startIndex {
+                    removal = content.index(before: range.lowerBound)..<range.upperBound
+                }
+                return collapseBlankRuns(content.replacingCharacters(in: removal, with: ""))
+            }
+            search = range.upperBound..<content.endIndex
         }
         return nil
     }

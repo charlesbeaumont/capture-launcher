@@ -57,10 +57,14 @@ enum DestinationRanker {
 
     // MARK: - Scoring
 
-    /// title-prefix 100 > word-boundary prefix 80 > fuzzy subsequence 40 + compactness.
+    /// title-prefix 100 > exact kind 90 > word-boundary prefix 80 > kind prefix 70
+    /// > fuzzy subsequence 40 + compactness. Exact kind beats kind prefix so
+    /// `person` lists people before personal notes.
     static func matchQuality(_ item: IndexedDestination, query: String) -> Double? {
         if item.normalizedTitle.hasPrefix(query) { return 100 }
+        if item.normalizedKind == query { return 90 }
         if item.words.contains(where: { $0.hasPrefix(query) }) { return 80 }
+        if item.normalizedKind.hasPrefix(query) { return 70 }
         if let span = subsequenceSpan(of: query, in: item.normalizedTitle) {
             return 40 + 10 * (Double(query.count) / Double(span))
         }

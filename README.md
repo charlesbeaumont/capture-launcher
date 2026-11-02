@@ -50,7 +50,7 @@ Then ⌘R. No Dock icon — look for the brain glyph in the menu bar. For tight 
 | `↑` `↓` | Move the selection |
 | `Esc` | Back to editing, then close |
 
-The picker list is ranked by match quality, recency, and your recent routings. Each row shows its kind as a colored chip on the right: project, personal, person, list, agenda, or 15Five. A dim `ms` readout shows the filter latency.
+The picker list is ranked by match quality, recency, and your recent routings. Each row shows its kind as a colored chip on the right: project, personal, person, list, agenda, or 15Five. Type a kind, such as `project`, `list` or `person`, to see every note of that kind. A dim `ms` readout shows the filter latency.
 
 ## Destinations
 
@@ -67,15 +67,17 @@ Credentials stay in your macOS Keychain. An unused connection expires after 30 d
 
 ## Process Inbox
 
-`⌃⌘⇧Space` (or the menu item) triages existing inbox entries oldest-first, one at a time — prefilled and editable, with a `4/31` counter:
+`⌃⌘⇧Space` (or the menu item) first asks what to process: `Enter` takes the Inbox, or type to pick a `#list` note. It then triages the entries oldest-first, one at a time — prefilled and editable, with a `4/31` counter:
 
 | Action | Result |
 |---|---|
-| `Enter` → type + `Enter` | File to the matched destination and remove from the Inbox |
-| `Enter` → `Enter` (empty) | Keep it in the Inbox and move on |
-| `⌘⌫` | Discard (remove from the Inbox) |
-| `Tab` | Skip (leave in the Inbox) |
+| `Enter` → type + `Enter` | File to the matched destination and remove from the source |
+| `Enter` → `Enter` (empty) | Keep it in the source and move on |
+| `⌘⌫` | Discard (remove from the source) |
+| `Tab` | Skip (leave it in the source) |
 | `Esc` | Exit |
+
+A list's entries are its top-level bullets, with any indented lines under them. A leading `2026-07-23 10:45 —` timestamp is kept when the entry is filed.
 
 Every decision advances instantly; the Bear writes happen behind it.
 
