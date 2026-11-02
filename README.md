@@ -50,7 +50,7 @@ Then ⌘R. No Dock icon — look for the brain glyph in the menu bar. For tight 
 | `↑` `↓` | Move the selection |
 | `Esc` | Back to editing, then close |
 
-The picker list is ranked by match quality, recency, and your recent routings. Each row shows its kind as a colored chip on the right: project, personal, person, list, agenda, or 15Five. A dim `ms` readout shows the filter latency.
+The picker list is ranked by match quality, recency, and your recent routings. Each row shows its kind as a colored chip on the right: project, personal, person, list, agenda, or 15Five. Type a kind, such as `project`, `list` or `person`, to see every note of that kind. A dim `ms` readout shows the filter latency.
 
 ## Destinations
 

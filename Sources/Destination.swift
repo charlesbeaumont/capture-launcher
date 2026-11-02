@@ -28,6 +28,8 @@ struct IndexedDestination: Sendable {
     let destination: Destination
     let normalizedTitle: String
     let words: [String]
+    /// The type tag, so typing `project` or `list` lists every note of that kind.
+    let normalizedKind: String
 
     init(_ destination: Destination) {
         self.destination = destination
@@ -36,5 +38,7 @@ struct IndexedDestination: Sendable {
         words = normalizedTitle
             .split(whereSeparator: { " -/&,".contains($0) })
             .map(String.init)
+        normalizedKind = destination.kind.label
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 }
