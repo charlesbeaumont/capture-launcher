@@ -1,20 +1,16 @@
 import Foundation
 
-struct InboxEntry: Identifiable, Hashable, Sendable {
-    /// The header line as found, e.g. "**2026-07-04 09:10**".
-    let header: String
-    /// Body text without the header, trailing whitespace trimmed. May be empty.
+struct TriageEntry: Identifiable, Hashable, Sendable {
+    /// Text shown for editing: the source's own markup (header, bullet,
+    /// timestamp, indentation) stripped.
     let body: String
-    /// Header + body exactly as they appear in the note — the removal key.
+    /// The entry exactly as it appears in the note: the removal key.
     let exactBlock: String
+    /// The original timestamp, `2026-07-04 09:10` or date-only `2026-07-04`,
+    /// so a filed entry keeps its capture time.
+    let datetime: String?
 
     var id: String { exactBlock }
-
-    /// The header's timestamp, `2026-07-04 09:10` or date-only `2026-07-04`.
-    var datetime: String? {
-        guard let match = header.firstMatch(of: /\*\*(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)\*\*/) else { return nil }
-        return String(match.1)
-    }
 }
 
 /// Splits the Inbox note into capture blocks. Blocks start with a
@@ -30,9 +26,9 @@ enum InboxParser {
         line.wholeMatch(of: headerRegex) != nil
     }
 
-    static func parse(_ noteText: String) -> [InboxEntry] {
+    static func parse(_ noteText: String) -> [TriageEntry] {
         let lines = noteText.split(separator: "\n", omittingEmptySubsequences: false)
-        var entries: [InboxEntry] = []
+        var entries: [TriageEntry] = []
         var currentHeader: Substring?
         var currentBody: [Substring] = []
 
@@ -51,7 +47,8 @@ enum InboxParser {
             guard !header.contains("→") else { return }
             let bodyText = body.joined(separator: "\n")
             let exact = bodyText.isEmpty ? String(header) : header + "\n" + bodyText
-            entries.append(InboxEntry(header: String(header), body: bodyText, exactBlock: exact))
+            let datetime = header.firstMatch(of: /\*\*(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)\*\*/).map { String($0.1) }
+            entries.append(TriageEntry(body: bodyText, exactBlock: exact, datetime: datetime))
         }
 
         for line in lines {

@@ -9,7 +9,8 @@ final class LauncherModel {
     enum Mode { case capture, triage }
 
     enum Stage: Equatable {
-        case loading      // triage only: reading the inbox (a few ms)
+        case source       // triage only: pick the Inbox or a list to process
+        case loading      // triage only: reading the source note (a few ms)
         case compose      // editing the thought (prefilled in triage)
         case route        // destination picker below the dimmed text
         case done         // triage only: "inbox clear" flash
@@ -33,7 +34,9 @@ final class LauncherModel {
     private(set) var hint: String?
 
     // Triage session (immutable snapshot).
-    private(set) var entries: [InboxEntry] = []
+    /// The note being processed: the Inbox or a `#list` note.
+    private(set) var source: Destination = .inbox
+    private(set) var entries: [TriageEntry] = []
     private(set) var currentIndex = 0
 
     init(
@@ -48,8 +51,8 @@ final class LauncherModel {
         self.router = router
         self.bear = bear
         self.onFinish = onFinish
-        self.stage = mode == .capture ? .compose : .loading
-        if mode == .triage { loadTriageSession() }
+        self.stage = mode == .capture ? .compose : .source
+        if mode == .triage { refilter() }
     }
 
     // MARK: - Derived display state
@@ -68,27 +71,31 @@ final class LauncherModel {
     }
 
     var queryPlaceholder: String {
-        let fallback: String
-        switch mode {
-        case .capture: fallback = "enter → inbox"
-        case .triage: fallback = "enter → keep in inbox"
+        switch (mode, stage) {
+        case (.capture, _): return "route to…  enter → inbox"
+        case (.triage, .source): return "process…  enter → inbox"
+        case (.triage, _): return "route to…  enter → keep in \(source.title)"
         }
-        return "route to…  \(fallback)"
     }
+
+    var doneText: String { "\(source.title.lowercased()) clear" }
 
     var hintText: String {
         if let hint { return hint }
         switch (mode, stage) {
         case (.capture, .route): return "↩ route · esc back"
+        case (.triage, .source): return "↩ process · esc exit"
         case (.triage, .compose): return "↩ route · ⇥ skip · ⌘⌫ discard · esc exit"
         case (.triage, .route): return "↩ file · ⇥ skip · ⌘⌫ discard · esc back"
         default: return ""
         }
     }
 
-    /// Empty-query default row. In triage, picking it keeps the item in the
-    /// Inbox and moves on.
-    private var pinnedDestination: Destination { .inbox }
+    /// Empty-query default row. In triage, picking it keeps the item in its
+    /// source note and moves on.
+    private var pinnedDestination: Destination {
+        mode == .capture || stage == .source ? .inbox : source
+    }
 
     // MARK: - Stage transitions
 
@@ -113,6 +120,15 @@ final class LauncherModel {
         stage = .route
     }
 
+    func submitSource() {
+        guard selectionIndex < ranked.count else { return }
+        source = ranked[selectionIndex].destination
+        query = ""
+        hint = nil
+        stage = .loading
+        loadTriageSession()
+    }
+
     func submitRoute() {
         guard selectionIndex < ranked.count else {
             if mode == .triage { advance() }
@@ -131,7 +147,7 @@ final class LauncherModel {
             onFinish()
         case .triage:
             let entry = entries[currentIndex]
-            router.triageRoute(entry: entry, editedText: text, to: destination)
+            router.triageRoute(entry: entry, editedText: text, to: destination, from: source)
             advance()
         }
     }
@@ -144,7 +160,7 @@ final class LauncherModel {
         switch stage {
         case .route:
             stage = .compose
-        case .compose, .loading, .done:
+        case .source, .compose, .loading, .done:
             onFinish()
         }
     }
@@ -156,7 +172,7 @@ final class LauncherModel {
 
     func discard() {
         guard mode == .triage, currentIndex < entries.count else { return }
-        router.triageDiscard(entry: entries[currentIndex])
+        router.triageDiscard(entry: entries[currentIndex], from: source)
         advance()
     }
 
@@ -168,7 +184,7 @@ final class LauncherModel {
     func refilter() {
         let start = CFAbsoluteTimeGetCurrent()
         ranked = DestinationRanker.rank(
-            indexed: store.indexed,
+            indexed: candidates,
             query: query,
             usageIndex: store.usageIndex,
             pinned: pinnedDestination
@@ -177,24 +193,39 @@ final class LauncherModel {
         selectionIndex = 0
     }
 
+    /// Picker rows below the pinned one. Choosing a source offers the lists;
+    /// routing a list's item leaves that list out, since its pinned row
+    /// already means "keep it there".
+    private var candidates: [IndexedDestination] {
+        switch (stage, source.kind) {
+        case (.source, _): store.indexed.filter { $0.destination.kind == .list }
+        case (_, .inbox): store.indexed
+        default: store.indexed.filter { $0.destination.id != source.id }
+        }
+    }
+
     // MARK: - Triage session
 
     private func loadTriageSession() {
+        let source = source
         Task { [weak self] in
             guard let self else { return }
             do {
-                let content = try await bear.readNote(id: DestinationStore.inboxNoteId).content
-                let parsed = InboxParser.parse(content)
+                let content = try await bear.readNote(id: CaptureRouter.noteId(of: source)).content
+                let parsed = source.kind == .inbox ? InboxParser.parse(content) : ListParser.parse(content)
                 self.entries = parsed
                 if parsed.isEmpty {
-                    self.finishTriage()
+                    // Back to the picker, so an empty Inbox never blocks the lists.
+                    self.hint = "\(source.title) is empty · pick another or esc"
+                    self.stage = .source
+                    self.refilter()
                 } else {
                     self.currentIndex = 0
                     self.composeText = parsed[0].body
                     self.stage = .compose
                 }
             } catch {
-                Notify.failure("Could not read the Inbox note: \(error)")
+                Notify.failure("Could not read \(source.title): \(error)")
                 self.onFinish()
             }
         }
